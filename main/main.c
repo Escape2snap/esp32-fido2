@@ -98,7 +98,9 @@ TaskHandle_t hcore0 = NULL, hcore1 = NULL;
 
 void execute_tasks(void);
 void execute_tasks(void) {
+#ifndef ESP_PLATFORM
     tud_task();
+#endif
     usb_task();
     led_blinking_task();
 }

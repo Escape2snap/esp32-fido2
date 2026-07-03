@@ -4,6 +4,7 @@ idf_component_register(
     REQUIRES
         picokeys
         openpgp
+        fido
         esp_tinyusb
         mbedtls
         driver
