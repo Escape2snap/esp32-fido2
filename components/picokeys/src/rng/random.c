@@ -1,0 +1,125 @@
+/*
+ * This file is part of the Pico Keys SDK distribution (https://github.com/polhenarejos/pico-keys-sdk).
+ * Copyright (c) 2022 Pol Henarejos.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, version 3.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#define HWRNG_PRE_LOOP 32
+
+#include "picokeys.h"
+#include "hwrng.h"
+#include "random.h"
+#if defined(PICO_PLATFORM)
+#include "pico/mutex.h"
+#elif defined(ESP_PLATFORM)
+#include "compat/esp_compat.h"
+#else
+#include "compat/queue.h"
+#endif
+
+#define RANDOM_BYTES_LENGTH 32
+static uint32_t random_word[RANDOM_BYTES_LENGTH / sizeof(uint32_t)];
+static mutex_t random_mutex;
+static bool random_mutex_initialized = false;
+
+void random_init(void) {
+    mutex_init(&random_mutex);
+    random_mutex_initialized = true;
+    hwrng_init(random_word, RANDOM_BYTES_LENGTH / sizeof(uint32_t));
+
+    for (int i = 0; i < HWRNG_PRE_LOOP; i++) {
+        hwrng_get();
+    }
+}
+
+/*
+ * Free pointer to random 32-byte
+ */
+static void random_bytes_free(const uint8_t *p) {
+    (void) p;
+    memset(random_word, 0, RANDOM_BYTES_LENGTH);
+    hwrng_flush();
+}
+
+/*
+ * Return pointer to random 32-byte
+ */
+#define MAX_RANDOM_BUFFER 1024
+const uint8_t *random_bytes_get(size_t len) {
+    if (len > MAX_RANDOM_BUFFER) {
+        return NULL;
+    }
+    static uint32_t return_word[MAX_RANDOM_BUFFER / sizeof(uint32_t)];
+    if (random_mutex_initialized) {
+        mutex_enter_blocking(&random_mutex);
+    }
+    for (size_t ix = 0; ix < len; ix += RANDOM_BYTES_LENGTH) {
+        hwrng_wait_full();
+        memcpy(return_word + ix / sizeof(uint32_t), random_word, RANDOM_BYTES_LENGTH);
+        random_bytes_free((const uint8_t *) random_word);
+    }
+    if (random_mutex_initialized) {
+        mutex_exit(&random_mutex);
+    }
+    return (const uint8_t *) return_word;
+}
+
+/*
+ * Random byte iterator
+ */
+int random_fill_iterator(void *arg, unsigned char *out, size_t out_len) {
+    random_fill_iterator_ctx_t *ctx = (random_fill_iterator_ctx_t *) arg;
+    uint32_t index = ctx ? ctx->index : 0;
+    uint8_t n;
+    int ret = 0;
+
+    if (random_mutex_initialized) {
+        mutex_enter_blocking(&random_mutex);
+    }
+    while (out_len) {
+        if (ctx && ctx->cancel) {
+            ret = -1;
+            break;
+        }
+        hwrng_wait_full();
+
+        n = RANDOM_BYTES_LENGTH - index;
+        if (n > out_len) {
+            n = (uint8_t)out_len;
+        }
+
+        memcpy(out, ((unsigned char *) random_word) + index, n);
+        out += n;
+        out_len -= n;
+        index += n;
+
+        if (index >= RANDOM_BYTES_LENGTH) {
+            index = 0;
+            hwrng_flush();
+        }
+    }
+
+    if (ctx) {
+        ctx->index = index;
+    }
+    if (random_mutex_initialized) {
+        mutex_exit(&random_mutex);
+    }
+
+    return ret;
+}
+
+int random_fill_buffer(uint8_t *buf, size_t n) {
+    return random_fill_iterator(NULL, buf, n);
+}

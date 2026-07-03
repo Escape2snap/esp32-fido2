@@ -1,0 +1,4 @@
+dependencies:
+  espressif/esp_tinyusb: ">=1.4"
+  espressif/tinyusb: ">=0.14"
+  zorxx/neopixel: "^1.0"
