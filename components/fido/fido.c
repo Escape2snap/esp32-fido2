@@ -90,9 +90,6 @@ extern uint8_t (*get_version_major)(void);
 extern uint8_t (*get_version_minor)(void);
 
 INITIALIZER ( fido_ctor ) {
-#if defined(USB_ITF_CCID) || defined(ENABLE_EMULATION)
-    ccid_atr = atr_fido;
-#endif
     get_version_major = fido_get_version_major;
     get_version_minor = fido_get_version_minor;
     register_app(fido_select, fido_aid);
@@ -502,9 +499,13 @@ void scan_all(void) {
 }
 
 extern bool needs_power_cycle;
+static bool fido_initialized = false;
 void init_fido(void) {
-    scan_all();
-    credential_migrate_rp_secure();
+    if (!fido_initialized) {
+        fido_initialized = true;
+        scan_all();
+        credential_migrate_rp_secure();
+    }
 #ifdef ENABLE_OTP_APP
     init_otp();
 #endif
