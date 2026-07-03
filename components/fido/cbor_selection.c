@@ -1,5 +1,5 @@
 /*
- * This file is part of the Pico Keys SDK distribution (https://github.com/polhenarejos/pico-keys-sdk).
+ * This file is part of the Pico FIDO distribution (https://github.com/polhenarejos/pico-fido).
  * Copyright (c) 2022 Pol Henarejos.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -15,19 +15,24 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef BUTTON_H
-#define BUTTON_H
+#include "picokeys.h"
+#include "fido.h"
+#include "ctap2_cbor.h"
+#include "ctap.h"
+#include "button.h"
 
-#include <stdint.h>
-#include <stdbool.h>
+extern char *rp_id, *user_name, *display_name;
 
-#if defined(ESP_PLATFORM)
-#define BOOT_PIN GPIO_NUM_0
-#endif
-
-extern bool button_wait(void);
-extern void button_task(void);
-
-#endif // BUTTON_H
-extern bool cancel_button;
-extern bool force_button_wait;
+int cbor_selection(void) {
+    rp_id = user_name = display_name = NULL;
+    force_button_wait = true;
+    int ret = wait_button_pressed() ;
+    force_button_wait = false;
+    if (ret == 1) {
+        return CTAP2_ERR_USER_ACTION_TIMEOUT;
+    }
+    else if (ret == 2) {
+        return CTAP2_ERR_OPERATION_DENIED;
+    }
+    return CTAP2_OK;
+}

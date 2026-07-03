@@ -1,5 +1,5 @@
 /*
- * This file is part of the Pico Keys SDK distribution (https://github.com/polhenarejos/pico-keys-sdk).
+ * This file is part of the Pico FIDO distribution (https://github.com/polhenarejos/pico-fido).
  * Copyright (c) 2022 Pol Henarejos.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -15,19 +15,10 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef BUTTON_H
-#define BUTTON_H
+#include "picokeys.h"
+#include "fido.h"
+#include "version.h"
 
-#include <stdint.h>
-#include <stdbool.h>
-
-#if defined(ESP_PLATFORM)
-#define BOOT_PIN GPIO_NUM_0
-#endif
-
-extern bool button_wait(void);
-extern void button_task(void);
-
-#endif // BUTTON_H
-extern bool cancel_button;
-extern bool force_button_wait;
+uint8_t PICO_PRODUCT = 2; // Pico FIDO
+uint8_t PICO_VERSION_MAJOR = PICO_FIDO_VERSION_MAJOR;
+uint8_t PICO_VERSION_MINOR = PICO_FIDO_VERSION_MINOR;

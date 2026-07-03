@@ -141,3 +141,4 @@ extern void rest_task(void);
 #endif
 
 #endif
+#define EV_BUTTON_CANCELLED      48

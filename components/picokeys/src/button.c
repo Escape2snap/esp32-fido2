@@ -39,6 +39,7 @@ bool is_req_button_pending(void) {
 }
 
 bool cancel_button = false;
+bool force_button_wait = false;
 
 #if !defined(ENABLE_EMULATION)
 #ifdef ESP_PLATFORM

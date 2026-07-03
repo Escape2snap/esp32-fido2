@@ -15,19 +15,9 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef BUTTON_H
-#define BUTTON_H
-
 #include <stdint.h>
-#include <stdbool.h>
+#include "picokeys_version.h"
 
-#if defined(ESP_PLATFORM)
-#define BOOT_PIN GPIO_NUM_0
-#endif
-
-extern bool button_wait(void);
-extern void button_task(void);
-
-#endif // BUTTON_H
-extern bool cancel_button;
-extern bool force_button_wait;
+const uint8_t PICO_PRODUCT = 0;
+const uint8_t PICO_VERSION_MAJOR = PICOKEYS_SDK_VERSION_MAJOR;
+const uint8_t PICO_VERSION_MINOR = PICOKEYS_SDK_VERSION_MINOR;

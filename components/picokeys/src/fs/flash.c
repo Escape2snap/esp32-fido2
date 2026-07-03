@@ -193,3 +193,10 @@ void flash_task(void) {
 void flash_commit(void) {
     low_flash_commit();
 }
+
+
+bool flash_commit_sync(uint32_t timeout_ms) {
+    (void)timeout_ms;
+    flash_commit();
+    return true;
+}
