@@ -280,4 +280,4 @@ This project incorporates work from multiple open-source projects:
 | [tinyusb](https://github.com/hathach/tinyusb) | MIT |
 | [cJSON](https://github.com/DaveGamble/cJSON) | MIT |
 
-The combined work is distributed under the **GNU General Public License v3.0**.
+The combined work is distributed under the **GNU Affero General Public License v3.0**.
