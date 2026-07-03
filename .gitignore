@@ -1,1 +1,7 @@
+build/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+managed_components/
 third-party/
+components/picokeys/src/version.c
