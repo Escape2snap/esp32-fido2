@@ -197,6 +197,7 @@ static int driver_write_ccid(uint8_t itf, const uint8_t *tx_buffer, uint16_t buf
 }
 
 static int ccid_write_fast(uint8_t itf, const uint8_t *buffer, uint16_t buffer_size) {
+    DEBUG_PAYLOAD(buffer, buffer_size);
     return driver_write_ccid(itf, buffer, buffer_size);
 }
 
