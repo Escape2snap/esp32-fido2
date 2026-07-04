@@ -92,7 +92,7 @@ static bool locked_out = false;
 static bool locked_out = true;
 #endif
 
-static uint8_t ready_pages = 0;
+uint8_t ready_pages = 0;
 
 bool flash_available = false;
 

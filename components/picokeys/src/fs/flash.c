@@ -16,6 +16,7 @@
  */
 
 #include "picokeys.h"
+#include "pico_time.h"
 
 #if !defined(PICO_PLATFORM)
 #define XIP_BASE                0
@@ -195,8 +196,12 @@ void flash_commit(void) {
 }
 
 
+extern uint8_t ready_pages;
 bool flash_commit_sync(uint32_t timeout_ms) {
-    (void)timeout_ms;
     flash_commit();
-    return true;
+    uint32_t deadline = board_millis() + timeout_ms;
+    while (ready_pages > 0 && board_millis() < deadline) {
+        low_flash_task();
+    }
+    return ready_pages == 0;
 }
