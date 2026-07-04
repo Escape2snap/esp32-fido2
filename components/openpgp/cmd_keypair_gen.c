@@ -19,6 +19,9 @@
 #include "openpgp.h"
 #include "do.h"
 #include "random.h"
+#ifdef MBEDTLS_EDDSA_C
+#include "eddsa_compat.h"
+#endif
 
 int cmd_keypair_gen(void) {
     if (P2(apdu) != 0x0) {
@@ -91,11 +94,26 @@ int cmd_keypair_gen(void) {
                 return SW_FUNC_NOT_SUPPORTED();
             }
 #ifdef MBEDTLS_EDDSA_C
-            if (gid == MBEDTLS_ECP_DP_ED25519 || gid == MBEDTLS_ECP_DP_ED448) {
-                // EdDSA key generation needs full Edwards ECP support in ecp.c.
-                // The forked mbedtls provides this, but ESP-IDF's ecp.c doesn't.
-                // Ed25519 keys can be imported via 'key-import' instead.
-                return SW_FUNC_NOT_SUPPORTED();
+            if (gid == MBEDTLS_ECP_DP_ED25519) {
+                printf("KEYPAIR Ed25519\r\n");
+                mbedtls_ecp_keypair ed;
+                mbedtls_ecp_keypair_init(&ed);
+                mbedtls_ecp_group_load(&ed.grp, gid);
+                r = ed25519_generate_keypair(&ed, random_fill_iterator, NULL);
+                if (r != 0) {
+                    mbedtls_ecp_keypair_free(&ed);
+                    return SW_EXEC_ERROR();
+                }
+                r = store_keys(&ed, algo[0], fid, true);
+                make_ecdsa_response(&ed);
+                mbedtls_ecp_keypair_free(&ed);
+                if (r != PICOKEYS_OK) {
+                    return SW_EXEC_ERROR();
+                }
+                goto keygen_done;
+            }
+            if (gid == MBEDTLS_ECP_DP_ED448) {
+                return SW_FUNC_NOT_SUPPORTED(); // Ed448 not yet supported
             }
 #endif
             mbedtls_ecp_keypair ecdsa;
@@ -115,6 +133,9 @@ int cmd_keypair_gen(void) {
         else {
             return SW_FUNC_NOT_SUPPORTED();
         }
+#ifdef MBEDTLS_EDDSA_C
+keygen_done:
+#endif
         file_t *pbef = file_search_by_fid(fid + 3, NULL, SPECIFY_EF);
         if (!pbef) {
             return SW_REFERENCE_NOT_FOUND();

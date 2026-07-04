@@ -29,4 +29,12 @@
 #define MBEDTLS_ERR_ECP_FEATURE_UNAVAILABLE (-0x4E80)
 #endif
 
+/* Ed25519 self-contained key generation */
+#if defined(MBEDTLS_ECP_DP_ED25519_ENABLED)
+#include "mbedtls/ecp.h"
+int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
+                             int (*f_rng)(void *, unsigned char *, size_t),
+                             void *p_rng);
+#endif
+
 #endif /* EDDSA_COMPAT_H */

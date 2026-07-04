@@ -32,6 +32,7 @@ idf_component_register(
         efuse
         mbedtls
         picokeys
+        eddsa
 )
 
 idf_component_set_property(${COMPONENT_NAME} WHOLE_ARCHIVE ON)
