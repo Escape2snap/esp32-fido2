@@ -350,7 +350,7 @@ char const *string_desc_arr [] = {
     (const char[]) { 0x09, 0x04 }, // 0: is supported language is English (0x0409)
     DEVICE_MANUFACTURER,            // 1: Manufacturer
     DEVICE_PRODUCT,                 // 2: Product
-    "11223344",                     // 3: Serials, should use chip ID
+    "11223344",                     // 3: Serial — replaced at runtime by chip ID
     "Config",                       // 4: Vendor Interface
     "MAC"                           // 5: MAC address string, handled separately
     , DEVICE_IFACE_HID

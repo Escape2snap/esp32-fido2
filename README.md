@@ -124,6 +124,20 @@ gpg/card> generate
 Open https://webauthn.io in your browser and register.
 ```
 
+> **FIDO2 user presence:** press the **BOOT button** (GPIO0) on the
+> ESP32-S3 board when prompted by the browser. This physical button press
+> confirms user presence for registration and authentication.
+
+### Device Configuration
+
+```bash
+cp main/device_config.old.h main/device_config.h
+# edit USB names, VID, PID, interface strings
+```
+
+`main/device_config.h` is gitignored — your custom identity stays local.
+The template at `main/device_config.old.h` has the default values.
+
 ### Python
 
 ```bash
@@ -186,7 +200,9 @@ esp32-fido2/
 ├── main/
 │   ├── CMakeLists.txt
 │   ├── idf_component.yml
-│   └── main.c
+│   ├── main.c
+│   ├── device_config.h        ← gitignored, your custom identity
+│   └── device_config.old.h    ← template, tracked in git
 ├── components/
 │   ├── picokeys/        # Core SDK (USB, FS, LED, RNG...)
 │   ├── openpgp/         # OpenPGP smartcard v3.4
