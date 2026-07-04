@@ -124,8 +124,8 @@ int app_main(void) {
     file_scan_flash();
     init_rtc();
     phy_init();
-    // Only HID (FIDO) + CCID — no keyboard, no WCID
-    phy_data.enabled_usb_itf = PHY_USB_ITF_CCID | PHY_USB_ITF_HID;
+    // DIAG: CCID only (no HID) to test Windows compatibility
+    phy_data.enabled_usb_itf = PHY_USB_ITF_CCID | PHY_USB_ITF_WCID;
     phy_data.enabled_usb_itf_present = true;
     led_init();
     usb_init();
