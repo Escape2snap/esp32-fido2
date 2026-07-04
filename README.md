@@ -49,9 +49,9 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 
 | Slot | Algorithm |
 |------|----------|
-| Signature (SIG) | brainpool384r1 (ECDSA) |
-| Decryption (DEC) | brainpool384r1 (ECDH) |
-| Authentication (AUT) | brainpool384r1 (ECDSA) |
+| Signature (SIG) | NIST P-384 (ECDSA) |
+| Decryption (DEC) | NIST P-384 (ECDH) |
+| Authentication (AUT) | NIST P-384 (ECDSA) |
 
 ### Hardware
 

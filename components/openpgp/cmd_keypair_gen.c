@@ -53,12 +53,12 @@ int cmd_keypair_gen(void) {
     const uint8_t *algo = algorithm_attr_rsa2k + 1;
     uint16_t algo_len = algorithm_attr_rsa2k[0];
     if (fid == EF_PK_SIG || fid == EF_PK_AUT) {
-        algo = algorithm_attr_bp384r1 + 1;
-        algo_len = algorithm_attr_bp384r1[0];
+        algo = algorithm_attr_p384r1 + 1;
+        algo_len = algorithm_attr_p384r1[0];
     }
     else if (fid == EF_PK_DEC) {
-        algo = algorithm_attr_bp384r1_ecdh + 1;
-        algo_len = algorithm_attr_bp384r1_ecdh[0];
+        algo = algorithm_attr_p384r1_ecdh + 1;
+        algo_len = algorithm_attr_p384r1_ecdh[0];
     }
     if (algo_ef && algo_ef->data) {
         algo = file_get_data(algo_ef);
