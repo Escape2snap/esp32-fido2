@@ -118,6 +118,16 @@ gpg/card> passwd
 gpg/card> generate
 ```
 
+> **First key generation:** The default algorithm is NIST P-384.
+> On Windows, GPG may report `Zero prefix in S-expression` on the first
+> `generate`. Run `key-attr` once to initialize, then generate normally:
+> ```
+> gpg/card> key-attr
+>   select ECC → NIST P-384 for all three slots
+> gpg/card> generate
+> ```
+> This only needs to be done once per fresh card.
+
 ### FIDO2 / WebAuthn
 
 ```
@@ -162,6 +172,18 @@ On **Windows**, the composite CCID+HID device may need 1–3 connection attempts
 before the smartcard driver fully enumerates. This is a known timing issue with
 Windows `usbccgp.sys` handling of multi-interface HID+CCID devices.
 A 100ms startup delay is built into the firmware to minimize this.
+
+### Known Limitations
+
+- **Brainpool curves:** ESP32-S3 HW ECC accelerator does not support
+  brainpool curves. Key generation and signing will fail. Use NIST P-256/P-384
+  or Curve 25519 instead.
+- **GPG key-attr:** On first key generation with default P-384, GPG on Windows
+  may report `Zero prefix in S-expression`. Run `key-attr` once before
+  `generate` to initialize the algorithm attributes.  
+- **CCID+HID coexistence:** Windows `usbccgp.sys` handles CCID and HID
+  interfaces better on reboot. If the smartcard reader doesn't appear,
+  reconnect the device.
 
 ---
 

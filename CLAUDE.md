@@ -107,15 +107,24 @@ The **BOOT button** (GPIO0) on the ESP32-S3 board serves as the FIDO2 user prese
 
 ## Algorithm Configuration
 
-### Defaults (brainpool384r1)
+### Defaults (NIST P-384)
 
 | Slot | Algorithm | Defined in |
 |------|-----------|------------|
-| SIG | brainpool384r1 (ECDSA) | `cmd_keypair_gen.c`, `do.c` |
-| DEC | brainpool384r1 (ECDH) | `cmd_keypair_gen.c`, `do.c` |
-| AUT | brainpool384r1 (ECDSA) | `cmd_keypair_gen.c`, `do.c` |
+| SIG | NIST P-384 (ECDSA) | `cmd_keypair_gen.c`, `do.c` |
+| DEC | NIST P-384 (ECDH) | `cmd_keypair_gen.c`, `do.c` |
+| AUT | NIST P-384 (ECDSA) | `cmd_keypair_gen.c`, `do.c` |
 
-DEC slot requires `ALGO_ECDH` (0x12), not `ALGO_ECDSA`. The `algorithm_attr_bp384r1_ecdh` variant in `do.c` provides the correct type.
+Each slot has its own algorithm attribute file (EF_ALGO_PRIV1/2/3).
+On first key generation, the algorithm attribute is written automatically.
+If GPG reports `Zero prefix in S-expression`, run `key-attr` first.
+
+### Important: Algorithm Attribute Storage
+
+After `cmd_keypair_gen.c` generates a key, the algorithm attribute must
+be written to `fid - 0x0010` (EF_ALGO_PRIV1/2/3). Without this, PSO:CDS
+falls back to `algorithm_attr_rsa2k` and tries RSA operations on an ECDSA
+key. See the `if (!file_has_data(algo_ef))` block in `cmd_keypair_gen.c`.
 
 ### Available Curves
 
@@ -126,9 +135,22 @@ DEC slot requires `ALGO_ECDH` (0x12), not `ALGO_ECDSA`. The `algorithm_attr_bp38
 | secp384r1 (P-384) | ✅ | ✅ | ✅ | — |
 | secp521r1 (P-521) | ✅ | ✅ | ✅ | — |
 | secp256k1 | ✅ | ✅ | ✅ | — |
-| brainpool256/384/512r1 | ✅ | ✅ | ✅ | — |
+| brainpool* | ✅ | ✅ | ✅ | ⚠️ No HW ECC support on ESP32-S3 |
 | Curve25519 (X25519) | ❌ | ✅ | ❌ | — |
 | Ed25519 | ✅ | ❌ | ✅ | `ENABLE_EDDSA` + mbedTLS fork |
+
+> Brainpool curves are defined in ESP-IDF but the HW ECC accelerator
+> only supports NIST curves. Key generation and signing will fail.
+
+### Flash Commit Async Issue
+
+`flash_commit()` is asynchronous — data is written in `low_flash_task()`
+which runs every 10ms. After key generation, GPG immediately sends PSO:CDS.
+If the key data hasn't been written to flash yet, the signing operation
+loads stale data and fails.
+
+**Fix:** `flash_commit_sync()` in `flash.c` busy-waits calling
+`low_flash_task()` until `ready_pages == 0`.
 
 ---
 
