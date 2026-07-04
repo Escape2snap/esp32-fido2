@@ -124,9 +124,9 @@ gpg/card> generate
 Open https://webauthn.io in your browser and register.
 ```
 
-> **FIDO2 user presence:** press the **BOOT button** (GPIO0) on the
-> ESP32-S3 board when prompted by the browser. This physical button press
-> confirms user presence for registration and authentication.
+**User Presence:** Press the **BOOT button** (GPIO0) on the board when
+prompted. This physical button press is required by FIDO2 for registration
+and authentication.
 
 ### Device Configuration
 
