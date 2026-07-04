@@ -231,7 +231,7 @@ enum
   VENDOR_REQUEST_WEBUSB = 1,
   VENDOR_REQUEST_MICROSOFT = 2
 };
-#define URL  "www.picokeys.com"
+#define URL  "github.com/Escape2snap/esp32-fido2"
 static bool web_serial_connected = false;
 
 const tusb_desc_webusb_url_t desc_url =
@@ -347,20 +347,20 @@ uint8_t const *tud_descriptor_bos_cb(void) {
 char *string_desc_itf[5] = {0};
 char const *string_desc_arr [] = {
     (const char[]) { 0x09, 0x04 }, // 0: is supported language is English (0x0409)
-    "Pol Henarejos",                     // 1: Manufacturer
-    "Pico Key",                       // 2: Product
-    "11223344",                      // 3: Serials, should use chip ID
-    "Config",               // 4: Vendor Interface
-    "MAC"                   // 5: MAC address string, handled separately
-    , "HID Interface"
-    , "HID Keyboard Interface"
+    "ESP32Key",                            // 1: Manufacturer
+    "ESP32Key",                            // 2: Product
+    "11223344",                            // 3: Serials, should use chip ID
+    "Config",                              // 4: Vendor Interface
+    "MAC"                                  // 5: MAC address string, handled separately
+    , "ESP32Key HID"
+    , "ESP32Key Keyboard"
 #ifdef USB_ITF_HID
-    , "CCID OTP FIDO Interface"
+    , "ESP32Key CCID"
 #else
-    , "CCID Interface"
+    , "ESP32Key CCID"
 #endif
-    , "WebCCID Interface"
-    , "Network Interface"
+    , "ESP32Key WebCCID"
+    , "ESP32Key Network"
 };
 
 #ifdef ESP_PLATFORM

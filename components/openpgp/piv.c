@@ -107,9 +107,9 @@ static int x509_create_cert(void *pk_ctx, uint8_t algo, uint8_t slot, bool attes
     mbedtls_x509write_crt_set_subject_key(&ctx, &skey);
     char buf_sname[256];
     if (attestation) {
-        sprintf(buf_sname, "C=ES,O=Pico Keys,CN=Pico OpenPGP PIV Attestation %X", slot);
+        sprintf(buf_sname, "C=ES,O=ESP32Key,CN=ESP32Key PIV Attestation %X", slot);
         mbedtls_x509write_crt_set_subject_name(&ctx, buf_sname);
-        mbedtls_x509write_crt_set_issuer_name(&ctx, "C=ES,O=Pico Keys,CN=Pico OpenPGP PIV Slot F9");
+        mbedtls_x509write_crt_set_issuer_name(&ctx, "C=ES,O=ESP32Key,CN=ESP32Key PIV Slot F9");
         file_t *ef_key = file_search_by_fid(EF_PIV_KEY_ATTESTATION, NULL, SPECIFY_EF);
         mbedtls_ecdsa_init(&actx);
         load_private_key_ecdsa(&actx, ef_key, false);
@@ -136,7 +136,7 @@ static int x509_create_cert(void *pk_ctx, uint8_t algo, uint8_t slot, bool attes
         else if (slot == EF_PIV_KEY_RETIRED18) {
             wslot = 0x93;
         }
-        sprintf(buf_sname, "C=ES,O=Pico Keys,CN=Pico OpenPGP PIV Slot %X", wslot);
+        sprintf(buf_sname, "C=ES,O=ESP32Key,CN=ESP32Key PIV Slot %X", wslot);
         mbedtls_x509write_crt_set_issuer_name(&ctx, buf_sname);
         mbedtls_x509write_crt_set_subject_name(&ctx, buf_sname);
         mbedtls_x509write_crt_set_issuer_key(&ctx, &skey);
@@ -278,7 +278,7 @@ static void select_piv_aid(void) {
     res_APDU[res_APDU_size++] = 9;
     memcpy(res_APDU + res_APDU_size, "\xA0\x00\x00\x03\x08\x00\x00\x10\x00", 9);
     res_APDU_size += 9;
-    const char *app_label = "Pico Keys PIV";
+    const char *app_label = "ESP32Key PIV";
     res_APDU[res_APDU_size++] = 0x50;
     res_APDU[res_APDU_size++] = strlen(app_label);
     memcpy(res_APDU + res_APDU_size, app_label, strlen(app_label));
