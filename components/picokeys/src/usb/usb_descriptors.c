@@ -23,12 +23,13 @@
 #include "picokeys_version.h"
 #include "usb.h"
 #include "serial.h"
+#include "device_config.h"
 
 #ifndef USB_VID
-#define USB_VID   0x2E8A
+#define USB_VID   DEVICE_VID
 #endif
 #ifndef USB_PID
-#define USB_PID   0x10FD
+#define USB_PID   DEVICE_PID
 #endif
 
 #if defined(PICO_PLATFORM) || defined(ESP_PLATFORM)
@@ -231,7 +232,7 @@ enum
   VENDOR_REQUEST_WEBUSB = 1,
   VENDOR_REQUEST_MICROSOFT = 2
 };
-#define URL  "www.picokeys.com"
+#define URL  DEVICE_URL
 static bool web_serial_connected = false;
 
 const tusb_desc_webusb_url_t desc_url =
@@ -347,20 +348,20 @@ uint8_t const *tud_descriptor_bos_cb(void) {
 char *string_desc_itf[5] = {0};
 char const *string_desc_arr [] = {
     (const char[]) { 0x09, 0x04 }, // 0: is supported language is English (0x0409)
-    "Pol Henarejos",                     // 1: Manufacturer
-    "Pico Key",                       // 2: Product
-    "11223344",                      // 3: Serials, should use chip ID
-    "Config",               // 4: Vendor Interface
-    "MAC"                   // 5: MAC address string, handled separately
-    , "HID Interface"
-    , "HID Keyboard Interface"
+    DEVICE_MANUFACTURER,            // 1: Manufacturer
+    DEVICE_PRODUCT,                 // 2: Product
+    "11223344",                     // 3: Serials, should use chip ID
+    "Config",                       // 4: Vendor Interface
+    "MAC"                           // 5: MAC address string, handled separately
+    , DEVICE_IFACE_HID
+    , DEVICE_IFACE_KB
 #ifdef USB_ITF_HID
-    , "CCID OTP FIDO Interface"
+    , DEVICE_IFACE_CCID
 #else
     , "CCID Interface"
 #endif
-    , "WebCCID Interface"
-    , "Network Interface"
+    , DEVICE_IFACE_WCID
+    , DEVICE_IFACE_NET
 };
 
 #ifdef ESP_PLATFORM
