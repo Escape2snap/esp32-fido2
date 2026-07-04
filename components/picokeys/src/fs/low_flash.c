@@ -169,8 +169,11 @@ void low_flash_task(void){
             flash_available = false;
         }
 #ifdef ESP_PLATFORM
-        esp_partition_munmap(fd_map);
-        esp_partition_mmap(part0, 0, part0->size, ESP_PARTITION_MMAP_DATA, (const void **)&map, (esp_partition_mmap_handle_t *)&fd_map);
+        static bool mmap_once = false;
+        if (!mmap_once) {
+            esp_partition_mmap(part0, 0, part0->size, ESP_PARTITION_MMAP_DATA, (const void **)&map, (esp_partition_mmap_handle_t *)&fd_map);
+            mmap_once = true;
+        }
 #endif
         mutex_exit(&mtx_flash);
     }

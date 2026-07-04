@@ -587,12 +587,11 @@ static int cmd_authenticate(void) {
         return SW_REFERENCE_NOT_FOUND();
     }
     if (meta[1] == PINPOLICY_DEFAULT) {
-        if (key_ref == EF_PIV_KEY_SIGNATURE) {
-            meta[1] = PINPOLICY_ALWAYS;
-        }
-        else {
-            meta[1] = PINPOLICY_ONCE;
-        }
+        uint8_t new_meta[4];
+        memcpy(new_meta, meta, meta_len > 4 ? 4 : meta_len);
+        new_meta[1] = (key_ref == EF_PIV_KEY_SIGNATURE) ? PINPOLICY_ALWAYS : PINPOLICY_ONCE;
+        meta_add(key_ref, new_meta, sizeof(new_meta));
+        meta_find(key_ref, &meta); // re-fetch updated meta
     }
     if ((meta[1] == PINPOLICY_ALWAYS || meta[1] == PINPOLICY_ONCE) && (!has_pwpiv && (key_ref == EF_PIV_KEY_AUTHENTICATION || key_ref == EF_PIV_KEY_SIGNATURE || key_ref == EF_PIV_KEY_KEYMGM || key_ref == EF_PIV_KEY_CARDAUTH || IS_RETIRED(key_ref)))) {
         return SW_SECURITY_STATUS_NOT_SATISFIED();
