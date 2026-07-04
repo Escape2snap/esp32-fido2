@@ -128,6 +128,7 @@ int app_main(void) {
     phy_data.enabled_usb_itf = PHY_USB_ITF_CCID | PHY_USB_ITF_HID;
     phy_data.enabled_usb_itf_present = true;
     led_init();
+    vTaskDelay(pdMS_TO_TICKS(100));  // USB hardware settle time
     usb_init();
 
     gpio_pad_select_gpio(BOOT_PIN);
