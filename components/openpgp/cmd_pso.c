@@ -53,7 +53,7 @@ int cmd_pso(void) {
     if (algo_ef && algo_ef->data) {
         algo = file_get_data(algo_ef);
     }
-    if (apdu.data[0] == 0x2) { //AES PSO?
+    if (apdu.nc > 0 && apdu.data[0] == 0x2) { //AES PSO?
         if (((apdu.nc - 1) % 16 == 0 && P1(apdu) == 0x80 && P2(apdu) == 0x86) ||
             (apdu.nc % 16 == 0 && P1(apdu) == 0x86 && P2(apdu) == 0x80)) {
             pk_fid = EF_AES_KEY;
@@ -117,11 +117,18 @@ int cmd_pso(void) {
             inc_sig_count();
         }
         else if (P1(apdu) == 0x80 && P2(apdu) == 0x86) {
-            if (apdu.nc < key_size) { //needs padding
-                memset(apdu.data + apdu.nc, 0, key_size - apdu.nc);
+            uint8_t padded[512]; // RSA up to 4096 bits
+            if (key_size > sizeof(padded)) {
+                mbedtls_rsa_free(&ctx);
+                return SW_EXEC_ERROR();
+            }
+            size_t cipher_len = apdu.nc > 0 ? apdu.nc - 1 : 0;
+            memcpy(padded, apdu.data + 1, cipher_len);
+            if (cipher_len < key_size) {
+                memset(padded + cipher_len, 0, key_size - cipher_len);
             }
             size_t olen = 0;
-            r = mbedtls_rsa_pkcs1_decrypt(&ctx, random_fill_iterator, NULL, &olen, apdu.data + 1, res_APDU, key_size);
+            r = mbedtls_rsa_pkcs1_decrypt(&ctx, random_fill_iterator, NULL, &olen, padded, res_APDU, key_size);
             mbedtls_rsa_free(&ctx);
             if (r != 0) {
                 return SW_EXEC_ERROR();

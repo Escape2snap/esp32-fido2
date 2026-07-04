@@ -494,13 +494,19 @@ int meta_add(uint16_t fid, const uint8_t *data, uint16_t len) {
             }
         }
     }
-    fdata = (uint8_t *) realloc(fdata, ef_size + asn1_len_tag(fid & 0x1f, len + 2));
+    uint16_t mtag = (fid >= 0x1f) ? (0x80 | 0x1F) << 8 | (fid & 0xFF) : fid;
+    fdata = (uint8_t *) realloc(fdata, ef_size + asn1_len_tag(mtag, len + 2));
     uint8_t *f = fdata + ef_size;
-    *f++ = fid & 0x1f;
+    if (fid >= 0x1f) {
+        *f++ = 0x80 | 0x1F;
+        *f++ = fid & 0xFF;
+    } else {
+        *f++ = fid;
+    }
     f += format_tlv_len(len + 2, f);
     f += put_uint16_be(fid, f);
     memcpy(f, data, len);
-    r = file_put_data(ef, fdata, ef_size + (uint16_t)asn1_len_tag(fid & 0x1f, len + 2));
+    r = file_put_data(ef, fdata, ef_size + (uint16_t)asn1_len_tag(mtag, len + 2));
     free(fdata);
     if (r != PICOKEYS_OK) {
         return PICOKEYS_EXEC_ERROR;

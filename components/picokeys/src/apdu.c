@@ -127,7 +127,7 @@ uint16_t apdu_process(uint8_t itf, const uint8_t *buffer, uint16_t buffer_size) 
         if (apdu.rlen <= apdu.ne) {
 #ifndef ENABLE_EMULATION
 #ifdef USB_ITF_HID_CTAP
-            if (itf == ITF_HID_CTAP) {
+            if (ITF_HID_TOTAL > 0 && itf == ITF_HID_CTAP) {
                 driver_exec_finished_cont_hid(itf, apdu.rlen + 2, (uint16_t)(rdata_gr - apdu.rdata));
             }
 #endif
@@ -156,7 +156,7 @@ uint16_t apdu_process(uint8_t itf, const uint8_t *buffer, uint16_t buffer_size) 
             }
 #ifndef ENABLE_EMULATION
 #ifdef USB_ITF_HID_CTAP
-            if (itf == ITF_HID_CTAP) {
+            if (ITF_HID_TOTAL > 0 && itf == ITF_HID_CTAP) {
                 driver_exec_finished_cont_hid(itf, (uint16_t)(apdu.ne + 2), (uint16_t)(rdata_gr - apdu.ne - apdu.rdata));
             }
 #endif

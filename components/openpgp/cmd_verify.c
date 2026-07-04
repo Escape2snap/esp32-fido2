@@ -50,7 +50,7 @@ int cmd_verify(void) {
     if (!(pw_status = file_search_by_fid(EF_PW_PRIV, NULL, SPECIFY_EF))) {
         return SW_REFERENCE_NOT_FOUND();
     }
-    if (file_get_data(pw)[0] == 0) { //not initialized
+    if (!file_has_data(pw) || file_get_data(pw)[0] == 0) {
         return SW_REFERENCE_NOT_FOUND();
     }
     if (apdu.nc > 0) {

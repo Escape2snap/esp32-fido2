@@ -122,25 +122,33 @@ static uint8_t sc_itf_to_usb_itf(uint8_t itf) {
     return itf;
 }
 
+static bool ccid_buffers_ok = false;
+
 static void ccid_init_buffers(void) {
     if (ITF_SC_TOTAL == 0) {
         return;
     }
     if (ccid_rx == NULL) {
         ccid_rx = (usb_buffer_t *)calloc(ITF_SC_TOTAL, sizeof(usb_buffer_t));
+        if (!ccid_rx) return;
     }
     if (ccid_tx == NULL) {
         ccid_tx = (usb_buffer_t *)calloc(ITF_SC_TOTAL, sizeof(usb_buffer_t));
+        if (!ccid_tx) return;
     }
     if (ccid_header == NULL) {
         ccid_header = (ccid_header_t **)calloc(ITF_SC_TOTAL, sizeof(ccid_header_t *));
+        if (!ccid_header) return;
     }
     if (ccid_response == NULL) {
         ccid_response = (ccid_header_t **)calloc(ITF_SC_TOTAL, sizeof(ccid_header_t *));
+        if (!ccid_response) return;
     }
     if (ccid_resp_fast == NULL) {
         ccid_resp_fast = (ccid_header_t **)calloc(ITF_SC_TOTAL, sizeof(ccid_header_t *));
+        if (!ccid_resp_fast) return;
     }
+    ccid_buffers_ok = true;
 }
 
 static int driver_init_ccid(uint8_t itf) {
@@ -177,6 +185,7 @@ void tud_vendor_rx_cb(uint8_t itf, const uint8_t *buffer, uint16_t bufsize) {
 }
 
 static int driver_write_ccid(uint8_t itf, const uint8_t *tx_buffer, uint16_t buffer_size) {
+    if (!ccid_buffers_ok) return -1;
     if (*tx_buffer != 0x81) {
         DEBUG_PAYLOAD(tx_buffer, buffer_size);
     }
