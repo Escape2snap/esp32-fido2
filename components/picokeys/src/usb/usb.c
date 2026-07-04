@@ -315,7 +315,9 @@ extern void hid_task(void);
 extern void ccid_task(void);
 void usb_task(void) {
 #ifdef USB_ITF_HID
-    hid_task();
+    if (ITF_HID_TOTAL > 0) {
+        hid_task();
+    }
 #endif
 #ifdef ENABLE_EMULATION
     emul_task();
