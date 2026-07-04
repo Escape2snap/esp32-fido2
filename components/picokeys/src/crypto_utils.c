@@ -169,6 +169,7 @@ void hash_multi(const uint8_t *input, uint16_t len, uint8_t output[32]) {
     mbedtls_sha256_update(&ctx, pico_serial.id, sizeof(pico_serial.id));
 #endif
 
+    if (len == 0) len = 1; // prevent infinite loop
     while (iters > len) {
         mbedtls_sha256_update(&ctx, input, len);
         iters -= len;
