@@ -42,6 +42,9 @@ int cmd_pso(void) {
         algo_fid = algo_dec;
         pk_fid = pk_dec;
     }
+    else if (P1(apdu) == 0x86 && P2(apdu) == 0x80) {
+        // AES encipher — handled by is_aes path below
+    }
     else {
         return SW_INCORRECT_P1P2();
     }
