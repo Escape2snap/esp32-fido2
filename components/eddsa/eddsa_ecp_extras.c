@@ -255,6 +255,13 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
     ed25519_mont_reduce(&key->Q.X, &key->Q.X);
     ed25519_mont_reduce(&key->Q.Y, &key->Q.Y);
 
+    /* Copy group modulus P for make_ecdsa_response */
+    mbedtls_mpi_copy(&key->grp.P, &p);
+    /* Set generator G = (Bx, By) */
+    mbedtls_mpi_copy(&key->grp.G.X, &bp_x);
+    mbedtls_mpi_copy(&key->grp.G.Y, &bp_y);
+    mbedtls_mpi_lset(&key->grp.G.Z, 1);
+
     /* Set private key scalar */
     mbedtls_mpi_copy(&key->d, &scalar);
 

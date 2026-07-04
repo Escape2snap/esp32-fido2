@@ -98,7 +98,8 @@ int cmd_keypair_gen(void) {
                 printf("KEYPAIR Ed25519\r\n");
                 mbedtls_ecp_keypair ed;
                 mbedtls_ecp_keypair_init(&ed);
-                mbedtls_ecp_group_load(&ed.grp, gid);
+                mbedtls_ecp_group_init(&ed.grp);
+                ed.grp.id = gid;
                 r = ed25519_generate_keypair(&ed, random_fill_iterator, NULL);
                 if (r != 0) {
                     mbedtls_ecp_keypair_free(&ed);
