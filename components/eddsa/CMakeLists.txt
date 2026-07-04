@@ -19,11 +19,10 @@ idf_component_register(
     REQUIRES mbedtls
 )
 
-target_compile_definitions(${COMPONENT_LIB} PRIVATE
+target_compile_definitions(${COMPONENT_LIB} PUBLIC
     MBEDTLS_EDDSA_C=1
     MBEDTLS_ECP_DP_ED25519_ENABLED=1
     MBEDTLS_ECP_DP_ED448_ENABLED=1
-    MBEDTLS_SHA3_C=1
 )
 
 set_source_files_properties(

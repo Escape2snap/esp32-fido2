@@ -32,6 +32,7 @@
 #include "do.h"
 #ifdef MBEDTLS_EDDSA_C
 #include "mbedtls/eddsa.h"
+#include "eddsa_compat.h"
 #endif
 
 bool has_pw1 = false;

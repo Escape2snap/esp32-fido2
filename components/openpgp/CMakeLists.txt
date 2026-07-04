@@ -28,11 +28,18 @@ set(OPENPGP_SOURCES
 idf_component_register(
     SRCS ${OPENPGP_SOURCES}
     INCLUDE_DIRS ${OPENPGP_SRC_DIR}
+    PRIV_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/components/eddsa
     REQUIRES
         efuse
         mbedtls
         picokeys
         eddsa
+)
+
+target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    MBEDTLS_EDDSA_C=1
+    MBEDTLS_ECP_DP_ED25519_ENABLED=1
+    MBEDTLS_ECP_DP_ED448_ENABLED=1
 )
 
 idf_component_set_property(${COMPONENT_NAME} WHOLE_ARCHIVE ON)

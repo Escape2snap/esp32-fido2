@@ -24,10 +24,17 @@ set(FIDO_SOURCES
 idf_component_register(
     SRCS ${FIDO_SOURCES}
     INCLUDE_DIRS ${FIDO_SRC_DIR}
+    PRIV_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/third-party/mbedtls-fork/include ${CMAKE_SOURCE_DIR}/components/eddsa
     REQUIRES
         picokeys
         mbedtls
         tinycbor
+)
+
+target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    MBEDTLS_EDDSA_C=1
+    MBEDTLS_ECP_DP_ED25519_ENABLED=1
+    MBEDTLS_ECP_DP_ED448_ENABLED=1
 )
 
 idf_component_set_property(${COMPONENT_NAME} WHOLE_ARCHIVE ON)
