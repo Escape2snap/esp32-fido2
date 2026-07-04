@@ -275,6 +275,12 @@ const uint8_t algorithm_attr_bp384r1[] = {
     0x2B, 0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x0B
 };
 
+const uint8_t algorithm_attr_bp384r1_ecdh[] = {
+    10,
+    ALGO_ECDH,
+    0x2B, 0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x0B
+};
+
 const uint8_t algorithm_attr_bp512r1[] = {
     10,
     ALGO_ECDSA,
@@ -371,7 +377,7 @@ int parse_algoinfo(const file_t *f, int mode) {
         file_t *ef;
         if (!(ef = file_search_by_fid(fid, NULL, SPECIFY_EF)) || !ef->data) {
             const uint8_t *def_algo = algorithm_attr_rsa2k;
-            def_algo = algorithm_attr_bp384r1;
+            def_algo = (f->fid == EF_ALGO_DEC) ? algorithm_attr_bp384r1_ecdh : algorithm_attr_bp384r1;
             datalen += parse_algo(def_algo, f->fid);
         }
         else {

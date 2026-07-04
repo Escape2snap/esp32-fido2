@@ -57,8 +57,8 @@ int cmd_keypair_gen(void) {
         algo_len = algorithm_attr_bp384r1[0];
     }
     else if (fid == EF_PK_DEC) {
-        algo = algorithm_attr_bp384r1 + 1;
-        algo_len = algorithm_attr_bp384r1[0];
+        algo = algorithm_attr_bp384r1_ecdh + 1;
+        algo_len = algorithm_attr_bp384r1_ecdh[0];
     }
     if (algo_ef && algo_ef->data) {
         algo = file_get_data(algo_ef);
