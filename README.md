@@ -4,9 +4,9 @@ ESP32-FIDO2 transforms an **ESP32-S3** microcontroller into a combined **FIDO2 s
 
 Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 
-- **OpenPGP card v3.4** — GnuPG, SSH, S/MIME, smartcard operations
-- **FIDO2 / CTAP 2.1** — WebAuthn, U2F, passwordless authentication  
-- **OATH / OTP** *(in progress)* — TOTP/HOTP, Yubico OTP
+- **FIDO2 / CTAP 2.1** — WebAuthn, U2F, passwordless authentication ✅
+- **OpenPGP card v3.4** — GnuPG, SSH, S/MIME, smartcard operations ✅
+- **OATH / OTP** *(in progress)* — TOTP/HOTP, Yubico OTP 🚧
 
 > Standalone ESP-IDF project optimized for **ESP32-S3 N16R8**.
 > No Raspberry Pi Pico or cross-platform logic.
@@ -43,30 +43,25 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 | On-device key generation | ✅ |
 | Key import/export | ✅ |
 | PIN & Admin PIN protection | ✅ |
-| PW Status, Reset Code, AES KDF | ✅ |
 | GnuPG / SSH / S/MIME compatible | ✅ |
 
 ### Default Algorithm
 
-- **brainpool384r1** for Signature, Decryption, and Authentication keys
+| Slot | Algorithm |
+|------|----------|
+| Signature (SIG) | brainpool384r1 (ECDSA) |
+| Decryption (DEC) | brainpool384r1 (ECDH) |
+| Authentication (AUT) | brainpool384r1 (ECDSA) |
 
 ### Hardware
 
 | Spec | Details |
 |------|---------|
 | Chip | ESP32-S3 (Xtensa dual-core 240MHz) |
-| Flash | 16MB (Quad SPI) |
+| Flash | 16MB (Quad SPI QIO) |
 | PSRAM | 8MB (Octal PSRAM, optional) |
-| LED | NeoPixel WS2812 (GPIO48) |
-| USB | CCID (smartcard) + HID (CTAP) |
-
----
-
-## Requirements
-
-- **Hardware:** ESP32-S3 development board (e.g. ESP32-S3-DevKitC-1 N16R8)
-- **Software:** [ESP-IDF](https://github.com/espressif/esp-idf) v5.4.4+
-- **Cable:** USB-C data cable
+| LED | NeoPixel WS2812 (GPIO48, dimmed ~20%) |
+| USB | CCID (smartcard) + HID (FIDO2 CTAP) |
 
 ---
 
@@ -77,45 +72,33 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 git clone https://github.com/Escape2snap/esp32-fido2.git
 cd esp32-fido2
 
-# Set up ESP-IDF (install first if needed)
+# Set up ESP-IDF
 cd ~/esp-idf-v5.4.4
 ./install.sh esp32s3
 . ./export.sh
 cd ~/esp32-fido2
 
-# Set target, build, flash
+# First time: clean flash
 idf.py set-target esp32s3
 idf.py build
-idf.py -p /dev/ttyACM0 erase-flash   # first time only
+idf.py -p /dev/ttyACM0 erase-flash
+idf.py -p /dev/ttyACM0 flash
+
+# Subsequent builds
+idf.py build
 idf.py -p /dev/ttyACM0 flash
 
 # Monitor
 idf.py -p /dev/ttyACM0 monitor
 ```
 
-> **Tip:** Use `!` prefix in Claude Code to run commands interactively:
-> ```
-> ! idf.py -p /dev/ttyACM0 flash
-> ```
-
-### First Flash
-
-On a new device, erase the entire flash before the first write to ensure clean partitions:
-
-```bash
-idf.py -p /dev/ttyACM0 erase-flash
-idf.py -p /dev/ttyACM0 flash
-```
-
 ### Permission Issues (Linux)
 
 ```bash
-# Temporary fix (current session only)
+# Temporary
 sudo chmod 666 /dev/ttyACM0
-
-# Permanent fix
+# Permanent
 sudo usermod -a -G dialout $USER
-# Log out and back in, or restart WSL2
 ```
 
 ---
@@ -125,13 +108,10 @@ sudo usermod -a -G dialout $USER
 ### OpenPGP (GnuPG)
 
 ```bash
-# List connected smartcards
+# Check card
 gpg --card-status
 
-# If not detected, start scdaemon manually
-gpg-connect-agent --verbose /bye
-
-# Edit card (change PIN, generate keys, etc.)
+# Initialize (set PINs, generate keys)
 gpg --edit-card
 gpg/card> admin
 gpg/card> passwd
@@ -140,11 +120,13 @@ gpg/card> generate
 
 ### FIDO2 / WebAuthn
 
-```bash
-# Register with a WebAuthn demo
-# Open https://webauthn.io in your browser
+```
+Open https://webauthn.io in your browser and register.
+```
 
-# Or use Python fido2 library to enumerate
+### Python
+
+```bash
 pip install fido2
 python -c "
 from fido2.hid import CtapHidDevice
@@ -153,10 +135,19 @@ for dev in CtapHidDevice.list_devices():
 "
 ```
 
-### Yubico Tools
+---
 
-- **[Yubico Authenticator](https://www.yubico.com/products/yubico-authenticator/)** — OATH/TOTP codes *(coming soon)*
-- **[Yubico YKMAN](https://www.yubico.com/support/download/ykman/)** — FIDO2 configuration *(coming soon)*
+## Platform Notes
+
+| Feature | Linux | Windows |
+|---------|-------|---------|
+| FIDO2 | ✅ | ✅ |
+| OpenPGP (CCID) | ✅ | ✅ (may need retry on first connection) |
+
+On **Windows**, the composite CCID+HID device may need 1–3 connection attempts
+before the smartcard driver fully enumerates. This is a known timing issue with
+Windows `usbccgp.sys` handling of multi-interface HID+CCID devices.
+A 100ms startup delay is built into the firmware to minimize this.
 
 ---
 
@@ -164,27 +155,23 @@ for dev in CtapHidDevice.list_devices():
 
 ### Hardware Acceleration
 
-ESP32-S3 provides hardware acceleration for cryptographic operations, enabled by default:
-
-| Accelerator | mbedTLS Config |
-|-------------|----------------|
+| Accelerator | Config |
+|-------------|--------|
 | AES | `CONFIG_MBEDTLS_HARDWARE_AES=y` |
 | SHA | `CONFIG_MBEDTLS_HARDWARE_SHA=y` |
 | ECC | `CONFIG_MBEDTLS_HARDWARE_ECC=y` |
 | GCM | `CONFIG_MBEDTLS_HARDWARE_GCM=y` |
 
-### ESP-IDF Version
+### Interface Mode
 
-Tested with **ESP-IDF v5.4.4**. Also compatible with **v6.0.2** (with same mbedTLS feature set).
+Edit `main/main.c` to switch USB interfaces:
 
-To switch versions:
+```c
+// Both CCID + HID (default — FIDO2 + OpenPGP)
+phy_data.enabled_usb_itf = PHY_USB_ITF_CCID | PHY_USB_ITF_HID;
 
-```bash
-# Clean and reconfigure for new ESP-IDF
-source /path/to/esp-idf-v6.0.2/export.sh
-rm -rf build sdkconfig
-idf.py set-target esp32s3
-idf.py build
+// CCID + WCID only (more stable GPG on Windows, no FIDO2)
+phy_data.enabled_usb_itf = PHY_USB_ITF_CCID | PHY_USB_ITF_WCID;
 ```
 
 ---
@@ -193,45 +180,31 @@ idf.py build
 
 ```
 esp32-fido2/
-├── CMakeLists.txt              # Project configuration (ESP-IDF)
-├── sdkconfig.defaults          # Default Kconfig settings
-├── partitions.csv              # Flash layout (factory 2MB + part0 4MB)
+├── CMakeLists.txt
+├── sdkconfig.defaults
+├── partitions.csv
 ├── main/
 │   ├── CMakeLists.txt
-│   ├── idf_component.yml       # Managed component dependencies
-│   └── main.c                  # Entry point (app_main)
+│   ├── idf_component.yml
+│   └── main.c
 ├── components/
-│   ├── picokeys/               # Core SDK
-│   │   ├── CMakeLists.txt
-│   │   └── src/
-│   │       ├── fs/             # Flash file system
-│   │       ├── usb/            # USB CCID + HID transport
-│   │       ├── led/            # NeoPixel LED driver
-│   │       ├── rng/            # Random number generation
-│   │       └── compat/         # ESP32 platform compatibility
-│   ├── openpgp/                # OpenPGP smartcard v3.4
-│   │   ├── CMakeLists.txt
-│   │   └── *.c *.h             # APDU handlers, DO management, crypto
-│   ├── fido/                   # FIDO2 / CTAP 2.1
-│   │   ├── CMakeLists.txt
-│   │   └── *.c *.h             # CBOR handlers, credential mgmt, U2F
-│   └── tinycbor/               # CBOR parsing library
-└── managed_components/         # ESP-IDF managed components (gitignored)
-    ├── espressif__esp_tinyusb/
-    ├── espressif__tinyusb/
-    └── zorxx__neopixel/
+│   ├── picokeys/        # Core SDK (USB, FS, LED, RNG...)
+│   ├── openpgp/         # OpenPGP smartcard v3.4
+│   ├── fido/            # FIDO2 / CTAP 2.1 / U2F
+│   └── tinycbor/        # CBOR library
+└── managed_components/  # TinyUSB, NeoPixel
 ```
 
 ---
 
 ## Partition Layout
 
-| Partition | Offset | Size | Description |
-|-----------|--------|------|-------------|
-| nvs | 0x11000 | 24KB | NVS storage |
-| phy_init | 0x17000 | 4KB | PHY calibration |
-| factory | 0x20000 | 2MB | Application firmware |
-| part0 | 0x220000 | 4MB | Wear-levelled data storage |
+| Partition | Offset | Size |
+|-----------|--------|------|
+| nvs | 0x11000 | 24KB |
+| phy_init | 0x17000 | 4KB |
+| factory | 0x20000 | 2MB |
+| part0 | 0x220000 | 4MB |
 
 ---
 
@@ -249,35 +222,10 @@ perf:     performance optimization
 test:     testing
 ```
 
-### Adding Features
-
-1. **FIDO application:** Add new CBOR handlers in `components/fido/`
-2. **OpenPGP:** Add DO handlers in `components/openpgp/`
-3. **Hardware:** Configure pins and drivers in `components/picokeys/src/`
-
-For EdDSA support (Ed25519/Ed448), additional mbedTLS integration is required. See `config/esp32/ext/eddsa/` in the original pico-keys-sdk for reference.
-
----
-
-## Security Notes
-
-- **Secure Boot:** ESP32-S3 supports Secure Boot and Secure Lock via OTP
-- **MKEK:** Master Key Encryption Key stored in OTP — protects all private keys at rest
-- **Flash Encryption:** All secret key material encrypted before writing to flash
-- **⚠️ CVE-27840:** ESP32 has known Secure Boot bypass vulnerability. For high-assurance deployments, consider RP2350-based alternatives.
-
 ---
 
 ## License
 
-This project incorporates work from multiple open-source projects:
-
-| Project | License |
-|---------|---------|
-| [pico-openpgp](https://github.com/polhenarejos/pico-openpgp) | GPL v3 |
-| [pico-fido](https://github.com/polhenarejos/pico-fido) | GPL v3 |
-| [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk) | AGPL v3 |
-| [tinyusb](https://github.com/hathach/tinyusb) | MIT |
-| [cJSON](https://github.com/DaveGamble/cJSON) | MIT |
-
-The combined work is distributed under the **GNU Affero General Public License v3.0**.
+AGPL v3. Based on [pico-openpgp](https://github.com/polhenarejos/pico-openpgp) (GPL v3),
+[pico-fido](https://github.com/polhenarejos/pico-fido) (GPL v3), and
+[pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk) (AGPL v3).
