@@ -571,6 +571,7 @@ static void send_keepalive(void) {
 }
 
 void driver_exec_finished_hid(uint16_t size_next) {
+    if (!hid_tx || ITF_HID_TOTAL == 0) return;
     if (size_next > 0) {
         if (thread_type == 2 && apdu.sw != 0) {
             ctap_error(apdu.sw & 0xff);

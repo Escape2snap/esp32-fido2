@@ -94,7 +94,6 @@ enum {
 #ifdef USB_ITF_LWIP
     + TUD_CDC_NCM_DESC_LEN
 #endif
-    + 2 * 8  /* IADs: one for CCID, one for HID */
 )
 };
 
@@ -172,11 +171,6 @@ void usb_desc_setup(void) {
     uint8_t *p = desc_config + TUD_CONFIG_DESC_LEN;
 #ifdef USB_ITF_CCID
     if (ITF_CCID != ITF_INVALID) {
-        // IAD for CCID function
-        TUSB_DESC_TOTAL_LEN += 8;
-        const uint8_t iad_ccid[] = { 8, 0x0B, ITF_CCID, 1, TUSB_CLASS_SMART_CARD, 0, 0, 0 };
-        memcpy(p, iad_ccid, sizeof(iad_ccid));
-        p += sizeof(iad_ccid);
         TUSB_DESC_TOTAL_LEN += TUSB_SMARTCARD_CCID_DESC_LEN;
         const uint8_t desc_ccid[] = { TUD_SMARTCARD_DESCRIPTOR(ITF_CCID, ITF_CCID + 6, EPNUM_CCID, TUSB_DIR_IN_MASK | EPNUM_CCID, TUSB_DIR_IN_MASK | EPNUM_CCID_INT, 64) };
         memcpy(p, desc_ccid, sizeof(desc_ccid));
@@ -191,11 +185,6 @@ void usb_desc_setup(void) {
 #endif
 #ifdef USB_ITF_HID
     if (ITF_HID != ITF_INVALID) {
-        // IAD for HID function
-        TUSB_DESC_TOTAL_LEN += 8;
-        const uint8_t iad_hid[] = { 8, 0x0B, ITF_HID, 1, TUSB_CLASS_HID, 0, 0, 0 };
-        memcpy(p, iad_hid, sizeof(iad_hid));
-        p += sizeof(iad_hid);
         TUSB_DESC_TOTAL_LEN += TUD_HID_INOUT_DESC_LEN;
         const uint8_t desc[] = { TUD_HID_INOUT_DESCRIPTOR(ITF_HID, ITF_HID + 6, HID_ITF_PROTOCOL_NONE, sizeof(desc_hid_report), EPNUM_HID, (uint8_t)TUSB_DIR_IN_MASK | EPNUM_HID, CFG_TUD_HID_EP_BUFSIZE, 10) };
         memcpy(p, desc, sizeof(desc));
