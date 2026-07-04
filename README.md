@@ -224,6 +224,85 @@ test:     testing
 
 ---
 
+## Security Model
+
+### Key Hierarchy
+
+```
+OTP/eFuse (chip-internal, unreadable)
+  └── Master Key Encryption Key (MKEK)
+        └── AES/GCM/ChaCha20-Poly1305
+              └── Encrypted private keys → Flash storage
+```
+
+All private key material is **encrypted at rest** using a master key stored in
+the ESP32-S3's **OTP/eFuse** memory. eFuse is one-time programmable and
+physically inaccessible from outside the chip — even with physical flash
+readout, private keys cannot be recovered.
+
+### Key Derivation
+
+PIN-protected access uses a KEK (Key Encryption Key) flow:
+
+```
+User PIN ──→ KDF ──→ DEK (Data Encryption Key) ──→ Decrypt private key
+```
+
+Each decryption operation requires the correct PIN. The DEK is derived using
+the card's KDF algorithm and never exposed externally.
+
+### Secure Boot (Optional, One-Time)
+
+> **⚠️ Not enabled by default. Irreversible once activated.**
+
+ESP32-S3 supports Secure Boot via eFuse. When enabled, the chip verifies the
+firmware signature against a whitelisted public key before every boot.
+If the firmware is tampered with, the chip refuses to boot.
+
+**Before enabling** — understand the consequences:
+
+- **Irreversible**: eFuse is a physical one-time programmable fuse. Once blown,
+  Secure Boot cannot be disabled.
+- **Key management**: The signing private key must be kept safe. If lost,
+  firmware updates become impossible and the device is **permanently bricked**.
+- **Recovery impossible**: There is no backdoor, no recovery mode, and no
+  debug override.
+
+**Enable only if you accept the risk:**
+
+```bash
+# 1. Generate signing key (BACK THIS UP SAFELY)
+espsecure.py generate_signing_key secure_boot_signing_key.pem
+
+# 2. Sign the firmware binary
+espsecure.py sign_data --keyfile secure_boot_signing_key.pem \
+  --version 2 build/esp32_fido2.bin
+
+# 3. Flash normally
+idf.py -p /dev/ttyACM0 flash
+
+# 4. Burn the signing key to eFuse and enable Secure Boot
+#    ⚠️ THIS IS PERMANENT — READ ESP-IDF DOCS FIRST
+espefuse.py -p /dev/ttyACM0 burn_key secure_boot \
+  secure_boot_signing_key.pem
+
+# 5. Verify
+espefuse.py -p /dev/ttyACM0 summary
+```
+
+See the [ESP-IDF Secure Boot
+documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/security/secure-boot.html)
+for detailed instructions.
+
+### CVE-27840
+
+ESP32 (all variants including ESP32-S3) has a known Secure Boot bypass
+vulnerability (CVE-27840). For high-assurance deployments, consider
+RP2350-based alternatives which have a more robust secure boot
+implementation.
+
+---
+
 ## License
 
 AGPL v3. Based on [pico-openpgp](https://github.com/polhenarejos/pico-openpgp) (GPL v3),
