@@ -29,12 +29,18 @@
 #define MBEDTLS_ERR_ECP_FEATURE_UNAVAILABLE (-0x4E80)
 #endif
 
+/* Set up Ed25519 group parameters manually (bypasses system ecp_group_load) */
+int ed25519_setup_group(mbedtls_ecp_group *grp);
 /* Ed25519 self-contained key generation */
 #if defined(MBEDTLS_ECP_DP_ED25519_ENABLED)
 #include "mbedtls/ecp.h"
 int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
                              int (*f_rng)(void *, unsigned char *, size_t),
                              void *p_rng);
+/* Self-contained Ed25519 signing. key->d must contain 32-byte seed. */
+int ed25519_sign(const mbedtls_ecp_keypair *key,
+                 const uint8_t *msg, size_t msg_len,
+                 uint8_t sig[64]);
 #endif
 
 #endif /* EDDSA_COMPAT_H */

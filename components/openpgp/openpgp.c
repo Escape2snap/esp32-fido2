@@ -659,6 +659,14 @@ int store_keys(void *key_ctx, int type, uint16_t key_id, bool use_kek) {
         mbedtls_ecp_keypair *ecdsa = (mbedtls_ecp_keypair *) key_ctx;
         size_t olen = 0;
         kdata[0] = ecdsa->grp.id & 0xff;
+#ifdef MBEDTLS_EDDSA_C
+        if (ecdsa->grp.id == MBEDTLS_ECP_DP_ED25519) {
+            /* Store 32-byte seed (ed25519_generate_keypair stores seed in d) */
+            mbedtls_mpi_write_binary(&ecdsa->d, kdata + 1, 32);
+            olen = 32;
+        }
+        else
+#endif
         mbedtls_ecp_write_key_ext(ecdsa, &olen, kdata + 1, sizeof(kdata) - 1);
         key_size = olen + 1;
     }
@@ -733,6 +741,19 @@ int load_private_key_ecdsa(mbedtls_ecp_keypair *ctx, file_t *fkey, bool use_dek)
         return PICOKEYS_EXEC_ERROR;
     }
     mbedtls_ecp_group_id gid = kdata[0];
+#ifdef MBEDTLS_EDDSA_C
+    if (gid == MBEDTLS_ECP_DP_ED25519) {
+        int r2 = ed25519_setup_group(&ctx->grp);
+        if (r2 != 0) {
+            mbedtls_ecp_keypair_free(ctx);
+            return PICOKEYS_EXEC_ERROR;
+        }
+        mbedtls_mpi_read_binary(&ctx->d, kdata + 1, key_size - 1);
+        mbedtls_platform_zeroize(kdata, sizeof(kdata));
+        /* Skip calc_public — ed25519_sign recomputes Q internally */
+        return PICOKEYS_OK;
+    }
+#endif
     int r = mbedtls_ecp_read_key(gid, ctx, kdata + 1, key_size - 1);
     if (r != 0) {
         mbedtls_ecp_keypair_free(ctx);
@@ -813,6 +834,19 @@ void make_rsa_response(mbedtls_rsa_context *rsa) {
 void make_ecdsa_response(mbedtls_ecp_keypair *ecdsa) {
     uint8_t pt[MBEDTLS_ECP_MAX_PT_LEN];
     size_t plen = 0;
+#ifdef MBEDTLS_EDDSA_C
+    if (ecdsa->grp.id == MBEDTLS_ECP_DP_ED25519) {
+        /* Ed25519: 32-byte little-endian Y + sign bit of X */
+        mbedtls_mpi q;
+        mbedtls_mpi_init(&q);
+        mbedtls_mpi_copy(&q, &ecdsa->Q.Y);
+        mbedtls_mpi_set_bit(&q, 255, mbedtls_mpi_get_bit(&ecdsa->Q.X, 0));
+        plen = 32;
+        mbedtls_mpi_write_binary_le(&q, pt, 32);
+        mbedtls_mpi_free(&q);
+    }
+    else
+#endif
     mbedtls_ecp_point_write_binary(&ecdsa->grp, &ecdsa->Q, MBEDTLS_ECP_PF_UNCOMPRESSED, &plen, pt, sizeof(pt));
     res_APDU[res_APDU_size++] = 0x7f;
     res_APDU[res_APDU_size++] = 0x49;
@@ -898,8 +932,9 @@ int ecdsa_sign(mbedtls_ecp_keypair *ctx, const uint8_t *data, size_t data_len, u
 
     int r = 0;
 #ifdef MBEDTLS_EDDSA_C
-    if (ctx->grp.id == MBEDTLS_ECP_DP_ED25519 || ctx->grp.id == MBEDTLS_ECP_DP_ED448) {
-           r = mbedtls_eddsa_write_signature(ctx, data, data_len, out, 114, out_len, MBEDTLS_EDDSA_PURE, NULL, 0, random_fill_iterator, NULL);
+    if (ctx->grp.id == MBEDTLS_ECP_DP_ED25519) {
+        r = ed25519_sign(ctx, data, data_len, out);
+        *out_len = 64;
     }
     else
 #endif

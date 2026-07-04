@@ -338,9 +338,21 @@ int derive_key(const uint8_t *app_id, bool new_key, uint8_t *key_handle, int cur
         }
     }
     if (key != NULL) {
+#ifdef MBEDTLS_EDDSA_C
+        if (curve == MBEDTLS_ECP_DP_ED25519) {
+            if ((r = ed25519_setup_group(&key->grp)) != 0) {
+                mbedtls_platform_zeroize(outk, sizeof(outk));
+                return r;
+            }
+            mbedtls_mpi_read_binary(&key->d, outk, 32);
+            mbedtls_platform_zeroize(outk, sizeof(outk));
+            return 0;
+        }
+#endif
         mbedtls_ecp_group_load(&key->grp, curve);
         const mbedtls_ecp_curve_info *cinfo = mbedtls_ecp_curve_info_from_grp_id(curve);
         if (cinfo == NULL) {
+            mbedtls_platform_zeroize(outk, sizeof(outk));
             return 1;
         }
         if (cinfo->bit_size % 8 != 0) {

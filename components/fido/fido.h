@@ -25,6 +25,7 @@
 #include "mbedtls/ecdsa.h"
 #ifdef MBEDTLS_EDDSA_C
 #include "mbedtls/eddsa.h"
+#include "eddsa_compat.h"
 #endif
 #include "hid/ctap_hid.h"
 

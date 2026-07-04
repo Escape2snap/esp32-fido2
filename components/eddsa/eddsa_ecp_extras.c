@@ -35,23 +35,23 @@ cleanup:
 /* Edwards scalar expansion helpers                                    */
 /* ------------------------------------------------------------------ */
 #if defined(MBEDTLS_ECP_DP_ED25519_ENABLED)
+#include "mbedtls/sha512.h"
+/* Ed25519 seed expansion: SHA-512(seed) → {scalar, prefix} */
 static int mbedtls_ecp_expand_ed25519(const mbedtls_mpi *d,
                                       mbedtls_mpi *q,
                                       mbedtls_mpi *prefix)
 {
     int ret = MBEDTLS_ERR_ECP_BAD_INPUT_DATA;
-    uint8_t buf[34];
-    MBEDTLS_MPI_CHK(mbedtls_mpi_write_binary(d, buf + 2, 32));
-    buf[0] = 0x01; buf[1] = 0x20;
-    buf[2] &= 248; buf[31] &= 127; buf[31] |= 64;
+    uint8_t seed[32], hash[64];
+    MBEDTLS_MPI_CHK(mbedtls_mpi_write_binary(d, seed, 32));
+    mbedtls_sha512(seed, 32, hash, 0);
+    hash[0] &= 248; hash[31] &= 63; hash[31] |= 64;
     if (prefix != NULL)
-        MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(prefix, buf + 2, 32));
-    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(q, buf, 34));
-    MBEDTLS_MPI_CHK(mbedtls_mpi_shift_r(q, 2));
-    MBEDTLS_MPI_CHK(mbedtls_mpi_write_binary(q, buf, 34));
-    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(q, buf + 2, 32));
+        MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(prefix, hash + 32, 32));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(q, hash, 32));
 cleanup:
-    mbedtls_platform_zeroize(buf, sizeof(buf));
+    mbedtls_platform_zeroize(seed, sizeof(seed));
+    mbedtls_platform_zeroize(hash, sizeof(hash));
     return ret;
 }
 #endif
@@ -109,7 +109,6 @@ int mbedtls_ecp_expand_edwards(mbedtls_ecp_group *grp,
 /* Uses curve: -x^2 + y^2 = 1 + d*x^2*y^2 over GF(2^255-19)           */
 /* ------------------------------------------------------------------ */
 #if defined(MBEDTLS_ECP_DP_ED25519_ENABLED)
-#include "mbedtls/sha512.h"
 
 /* Ed25519 prime p = 2^255 - 19 */
 static const uint8_t ed25519_p[32] = {
@@ -270,8 +269,8 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
     mbedtls_mpi_copy(&key->grp.G.Y, &bp_y);
     mbedtls_mpi_lset(&key->grp.G.Z, 1);
 
-    /* Set private key scalar */
-    mbedtls_mpi_copy(&key->d, &scalar);
+    /* Set private key = seed (not clamped scalar — for eddsa signing) */
+    mbedtls_mpi_read_binary(&key->d, seed, 32);
 
     printf("Ed25519 keygen: success\n");
     ret = 0;
@@ -286,6 +285,239 @@ cleanup:
     mbedtls_mpi_free(&tx); mbedtls_mpi_free(&ty); mbedtls_mpi_free(&tz); mbedtls_mpi_free(&tt);
     mbedtls_mpi_free(&two); mbedtls_mpi_free(&scalar);
     mbedtls_mpi_free(&bp_x); mbedtls_mpi_free(&bp_y); mbedtls_mpi_free(&ed_d);
+    return ret;
+}
+
+/* Set up Ed25519 group params (for key loading without system ecp support) */
+int ed25519_setup_group(mbedtls_ecp_group *grp) {
+    int ret = MBEDTLS_ERR_ECP_BAD_INPUT_DATA;
+    mbedtls_ecp_group_init(grp);
+    grp->id = MBEDTLS_ECP_DP_ED25519;
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(&grp->P, ed25519_p, 32));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_sub_int(&grp->A, &grp->P, 1)); /* A = -1 mod p */
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_string(&grp->B, 10,
+        "37095705934669439368261579733463697440081861771719747696363762035337300239372"));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(&grp->G.X, ed25519_Bx, 32));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(&grp->G.Y, ed25519_By, 32));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_lset(&grp->G.Z, 1));
+    grp->pbits = 255;
+    grp->nbits = 254;
+    ret = 0;
+cleanup:
+    if (ret != 0) mbedtls_ecp_group_free(grp);
+    return ret;
+}
+
+/* Ed25519 group order l = 2^252 + 27742317777372353535851937790883648493 */
+static const uint8_t ed25519_l[32] = {
+    0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x14, 0xDE, 0xF9, 0xDE, 0xA2, 0xF7, 0x9C, 0xD6,
+    0x58, 0x12, 0x63, 0x1A, 0x5C, 0xF5, 0xD3, 0xED
+};
+
+/* Encode Edwards point as 32-byte little-endian Y + X sign bit */
+static void ed25519_encode_point(mbedtls_mpi *x, mbedtls_mpi *y, uint8_t out[32]) {
+    mbedtls_mpi q;
+    mbedtls_mpi_init(&q);
+    mbedtls_mpi_copy(&q, y);
+    mbedtls_mpi_set_bit(&q, 255, mbedtls_mpi_get_bit(x, 0));
+    mbedtls_mpi_write_binary_le(&q, out, 32);
+    mbedtls_mpi_free(&q);
+}
+
+/* Self-contained Ed25519 signing.
+ * key->d must contain the 32-byte seed. Computes Q = scalar*B internally. */
+int ed25519_sign(const mbedtls_ecp_keypair *key,
+                 const uint8_t *msg, size_t msg_len,
+                 uint8_t sig[64])
+{
+    int ret = MBEDTLS_ERR_ECP_BAD_INPUT_DATA;
+    uint8_t seed[32], hash[64], r_buf[64], h_buf[64];
+    uint8_t r_enc[32], q_enc[32];
+    mbedtls_mpi p, l, two, ed_d;
+    mbedtls_mpi scalar, prefix, r_nonce, k_chal;
+    mbedtls_mpi X1, Y1, Z1, T1;        /* base point */
+    mbedtls_mpi Xr, Yr, Zr, Tr;        /* R = r * B */
+    mbedtls_mpi Xq, Yq, Zq, Tq;        /* Q = scalar * B */
+    mbedtls_mpi a, b, c, d, e, f, g, h;
+    mbedtls_mpi tx, ty;
+    mbedtls_mpi bp_x, bp_y;
+    mbedtls_sha512_context sha;
+
+    mbedtls_mpi_init(&p); mbedtls_mpi_init(&l); mbedtls_mpi_init(&two);
+    mbedtls_mpi_init(&ed_d); mbedtls_mpi_init(&scalar); mbedtls_mpi_init(&prefix);
+    mbedtls_mpi_init(&r_nonce); mbedtls_mpi_init(&k_chal);
+    mbedtls_mpi_init(&X1); mbedtls_mpi_init(&Y1); mbedtls_mpi_init(&Z1); mbedtls_mpi_init(&T1);
+    mbedtls_mpi_init(&Xr); mbedtls_mpi_init(&Yr); mbedtls_mpi_init(&Zr); mbedtls_mpi_init(&Tr);
+    mbedtls_mpi_init(&Xq); mbedtls_mpi_init(&Yq); mbedtls_mpi_init(&Zq); mbedtls_mpi_init(&Tq);
+    mbedtls_mpi_init(&a); mbedtls_mpi_init(&b); mbedtls_mpi_init(&c);
+    mbedtls_mpi_init(&d); mbedtls_mpi_init(&e); mbedtls_mpi_init(&f);
+    mbedtls_mpi_init(&g); mbedtls_mpi_init(&h);
+    mbedtls_mpi_init(&tx); mbedtls_mpi_init(&ty);
+    mbedtls_mpi_init(&bp_x); mbedtls_mpi_init(&bp_y);
+
+    mbedtls_mpi_read_binary(&p, ed25519_p, 32);
+    mbedtls_mpi_read_binary(&l, ed25519_l, 32);
+    mbedtls_mpi_read_binary(&bp_x, ed25519_Bx, 32);
+    mbedtls_mpi_read_binary(&bp_y, ed25519_By, 32);
+    mbedtls_mpi_lset(&two, 2);
+    mbedtls_mpi_read_string(&ed_d, 10,
+        "37095705934669439368261579733463697440081861771719747696363762035337300239372");
+
+    /* Step 1: expand seed → scalar + prefix */
+    MBEDTLS_MPI_CHK(mbedtls_mpi_write_binary(&key->d, seed, 32));
+    mbedtls_sha512(seed, 32, hash, 0);
+    hash[0] &= 248; hash[31] &= 63; hash[31] |= 64;
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(&scalar, hash, 32));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(&prefix, hash + 32, 32));
+
+    /* Helper: compute point = scalar * base_point (double-and-add, extended coords) */
+    #define ED25519_MUL_TO(Xv,Yv,Zv,Tv,scalar_val) do { \
+        mbedtls_mpi_lset(&Xv, 0); mbedtls_mpi_lset(&Yv, 1); \
+        mbedtls_mpi_lset(&Zv, 1); mbedtls_mpi_lset(&Tv, 0); \
+        for (int _i = 255; _i >= 0; _i--) { \
+            /* double */ \
+            MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&a, &Xv, &Xv)); \
+            MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&b, &Yv, &Yv)); \
+            MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&c, &two, &Zv)); \
+            MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&c, &c, &Zv)); \
+            mbedtls_mpi_mod_mpi(&c, &c, &p); \
+            MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&d, &a, &b)); \
+            MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&e, &a, &b)); \
+            MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&f, &d, &c)); \
+            MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&g, &d, &c)); \
+            MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&h, &Yv, &Zv)); \
+            mbedtls_mpi_mod_mpi(&h, &h, &p); \
+            MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&h, &h, &two)); \
+            MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&Xv, &e, &f)); \
+            MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&Yv, &g, &h)); \
+            MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&Tv, &e, &h)); \
+            MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&Zv, &f, &g)); \
+            mbedtls_mpi_mod_mpi(&Xv, &Xv, &p); mbedtls_mpi_mod_mpi(&Yv, &Yv, &p); \
+            mbedtls_mpi_mod_mpi(&Tv, &Tv, &p); mbedtls_mpi_mod_mpi(&Zv, &Zv, &p); \
+            if (mbedtls_mpi_get_bit(scalar_val, _i)) { \
+                /* add base point */ \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&a, &Yv, &Xv)); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&b, &Y1, &X1)); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&tx, &a, &b)); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&a, &Yv, &Xv)); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&b, &Y1, &X1)); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&ty, &a, &b)); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&a, &Tv, &ed_d)); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&a, &a, &two)); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&b, &a, &T1)); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&c, &Zv, &two)); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&d, &c, &Z1)); \
+                mbedtls_mpi_sub_mpi(&e, &ty, &tx); \
+                mbedtls_mpi_sub_mpi(&f, &d, &b); \
+                mbedtls_mpi_add_mpi(&g, &d, &b); \
+                mbedtls_mpi_add_mpi(&h, &ty, &tx); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&Xv, &e, &f)); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&Yv, &g, &h)); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&Tv, &e, &h)); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&Zv, &f, &g)); \
+                mbedtls_mpi_mod_mpi(&Xv, &Xv, &p); mbedtls_mpi_mod_mpi(&Yv, &Yv, &p); \
+                mbedtls_mpi_mod_mpi(&Tv, &Tv, &p); mbedtls_mpi_mod_mpi(&Zv, &Zv, &p); \
+            } \
+        } \
+    } while(0)
+
+    /* Set base point extended coords */
+    mbedtls_mpi_copy(&X1, &bp_x); mbedtls_mpi_copy(&Y1, &bp_y);
+    mbedtls_mpi_lset(&Z1, 1);
+    MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&T1, &X1, &Y1));
+    mbedtls_mpi_mod_mpi(&T1, &T1, &p);
+
+    /* Compute Q = scalar * B */
+    ED25519_MUL_TO(Xq, Yq, Zq, Tq, &scalar);
+
+    /* Convert Q to affine */
+    {
+        mbedtls_mpi d_inv;
+        mbedtls_mpi_init(&d_inv);
+        MBEDTLS_MPI_CHK(mbedtls_mpi_inv_mod(&d_inv, &Zq, &p));
+        MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&Xq, &Xq, &d_inv));
+        MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&Yq, &Yq, &d_inv));
+        mbedtls_mpi_mod_mpi(&Xq, &Xq, &p);
+        mbedtls_mpi_mod_mpi(&Yq, &Yq, &p);
+        mbedtls_mpi_free(&d_inv);
+    }
+    ed25519_encode_point(&Xq, &Yq, q_enc);
+
+    /* Step 2: r = SHA-512(prefix || msg) mod l */
+    mbedtls_sha512_init(&sha);
+    mbedtls_sha512_starts(&sha, 0);
+    {
+        uint8_t prefix_buf[32];
+        mbedtls_mpi_write_binary_le(&prefix, prefix_buf, 32);
+        mbedtls_sha512_update(&sha, prefix_buf, 32);
+    }
+    mbedtls_sha512_update(&sha, msg, msg_len);
+    mbedtls_sha512_finish(&sha, r_buf);
+    mbedtls_sha512_free(&sha);
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary_le(&r_nonce, r_buf, 64));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_mod_mpi(&r_nonce, &r_nonce, &l));
+
+    /* Step 3: R = r * B */
+    ED25519_MUL_TO(Xr, Yr, Zr, Tr, &r_nonce);
+
+    /* Convert R to affine */
+    {
+        mbedtls_mpi d_inv;
+        mbedtls_mpi_init(&d_inv);
+        MBEDTLS_MPI_CHK(mbedtls_mpi_inv_mod(&d_inv, &Zr, &p));
+        MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&Xr, &Xr, &d_inv));
+        MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&Yr, &Yr, &d_inv));
+        mbedtls_mpi_mod_mpi(&Xr, &Xr, &p);
+        mbedtls_mpi_mod_mpi(&Yr, &Yr, &p);
+        mbedtls_mpi_free(&d_inv);
+    }
+    ed25519_encode_point(&Xr, &Yr, r_enc);
+
+    /* Step 4: k = SHA-512(R_enc || Q_enc || msg) mod l */
+    mbedtls_sha512_init(&sha);
+    mbedtls_sha512_starts(&sha, 0);
+    mbedtls_sha512_update(&sha, r_enc, 32);
+    mbedtls_sha512_update(&sha, q_enc, 32);
+    mbedtls_sha512_update(&sha, msg, msg_len);
+    mbedtls_sha512_finish(&sha, h_buf);
+    mbedtls_sha512_free(&sha);
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary_le(&k_chal, h_buf, 64));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_mod_mpi(&k_chal, &k_chal, &l));
+
+    /* Step 5: S = (r + k * scalar) mod l */
+    {
+        mbedtls_mpi tmp;
+        mbedtls_mpi_init(&tmp);
+        MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&tmp, &k_chal, &scalar));
+        MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&tmp, &r_nonce, &tmp));
+        MBEDTLS_MPI_CHK(mbedtls_mpi_mod_mpi(&tmp, &tmp, &l));
+        /* Output: sig[0:32] = R_enc, sig[32:64] = S (little-endian) */
+        memcpy(sig, r_enc, 32);
+        mbedtls_mpi_write_binary_le(&tmp, sig + 32, 32);
+        mbedtls_mpi_free(&tmp);
+    }
+
+    ret = 0;
+cleanup:
+    mbedtls_mpi_free(&p); mbedtls_mpi_free(&l); mbedtls_mpi_free(&two);
+    mbedtls_mpi_free(&ed_d); mbedtls_mpi_free(&scalar); mbedtls_mpi_free(&prefix);
+    mbedtls_mpi_free(&r_nonce); mbedtls_mpi_free(&k_chal);
+    mbedtls_mpi_free(&X1); mbedtls_mpi_free(&Y1); mbedtls_mpi_free(&Z1); mbedtls_mpi_free(&T1);
+    mbedtls_mpi_free(&Xr); mbedtls_mpi_free(&Yr); mbedtls_mpi_free(&Zr); mbedtls_mpi_free(&Tr);
+    mbedtls_mpi_free(&Xq); mbedtls_mpi_free(&Yq); mbedtls_mpi_free(&Zq); mbedtls_mpi_free(&Tq);
+    mbedtls_mpi_free(&a); mbedtls_mpi_free(&b); mbedtls_mpi_free(&c);
+    mbedtls_mpi_free(&d); mbedtls_mpi_free(&e); mbedtls_mpi_free(&f);
+    mbedtls_mpi_free(&g); mbedtls_mpi_free(&h);
+    mbedtls_mpi_free(&tx); mbedtls_mpi_free(&ty);
+    mbedtls_mpi_free(&bp_x); mbedtls_mpi_free(&bp_y);
+    mbedtls_platform_zeroize(seed, sizeof(seed));
+    mbedtls_platform_zeroize(hash, sizeof(hash));
+    mbedtls_platform_zeroize(r_buf, sizeof(r_buf));
+    mbedtls_platform_zeroize(h_buf, sizeof(h_buf));
+    mbedtls_platform_zeroize(r_enc, sizeof(r_enc));
+    mbedtls_platform_zeroize(q_enc, sizeof(q_enc));
     return ret;
 }
 #endif /* MBEDTLS_ECP_DP_ED25519_ENABLED */

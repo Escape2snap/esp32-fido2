@@ -672,7 +672,8 @@ int cbor_make_credential(const uint8_t *data, size_t len) {
     }
 #ifdef MBEDTLS_EDDSA_C
     else {
-        ret = mbedtls_eddsa_write_signature(&ekey, aut_data, aut_data_len + clientDataHash.len, sig, sizeof(sig), &olen, MBEDTLS_EDDSA_PURE, NULL, 0, random_fill_iterator, NULL);
+        ret = ed25519_sign(&ekey, aut_data, aut_data_len + clientDataHash.len, sig);
+        olen = 64;
     }
 #endif
     mbedtls_ecp_keypair_free(&ekey);
