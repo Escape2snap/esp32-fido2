@@ -6,3 +6,4 @@ managed_components/
 third-party/
 components/picokeys/src/version.c
 main/device_config.h
+third-party/

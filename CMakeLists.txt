@@ -5,6 +5,7 @@ set(EXTRA_COMPONENT_DIRS
     components/openpgp
     components/fido
     components/tinycbor
+    components/eddsa
 )
 
 add_compile_definitions(
