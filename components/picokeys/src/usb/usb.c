@@ -113,6 +113,15 @@ void usb_init(void)
     ITF_LWIP_TOTAL = 0;
 #endif
     ITF_TOTAL = 0;
+#ifdef USB_ITF_CCID
+    if (enabled_usb_itf & PHY_USB_ITF_CCID) {
+        ITF_SC_CCID = ITF_SC_TOTAL++;
+        ITF_CCID = ITF_TOTAL++;
+#ifndef ENABLE_EMULATION
+        string_desc_itf[ITF_TOTAL - 1] = string_desc_arr[8];
+#endif
+    }
+#endif
 #ifdef USB_ITF_HID
     if (enabled_usb_itf & PHY_USB_ITF_HID) {
         ITF_HID_CTAP = ITF_HID_TOTAL++;
@@ -130,13 +139,6 @@ void usb_init(void)
     }
 #endif
 #ifdef USB_ITF_CCID
-    if (enabled_usb_itf & PHY_USB_ITF_CCID) {
-        ITF_SC_CCID = ITF_SC_TOTAL++;
-        ITF_CCID = ITF_TOTAL++;
-#ifndef ENABLE_EMULATION
-        string_desc_itf[ITF_TOTAL - 1] = string_desc_arr[8];
-#endif
-    }
     if (enabled_usb_itf & PHY_USB_ITF_WCID) {
         ITF_SC_WCID = ITF_SC_TOTAL++;
         ITF_WCID = ITF_TOTAL++;

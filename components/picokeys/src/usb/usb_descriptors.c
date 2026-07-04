@@ -169,20 +169,6 @@ void usb_desc_setup(void) {
     desc_config[4] = ITF_TOTAL;
     TUSB_DESC_TOTAL_LEN = TUD_CONFIG_DESC_LEN;
     uint8_t *p = desc_config + TUD_CONFIG_DESC_LEN;
-#ifdef USB_ITF_HID
-    if (ITF_HID != ITF_INVALID) {
-        TUSB_DESC_TOTAL_LEN += TUD_HID_INOUT_DESC_LEN;
-        const uint8_t desc[] = { TUD_HID_INOUT_DESCRIPTOR(ITF_HID, ITF_HID + 6, HID_ITF_PROTOCOL_NONE, sizeof(desc_hid_report), EPNUM_HID, (uint8_t)TUSB_DIR_IN_MASK | EPNUM_HID, CFG_TUD_HID_EP_BUFSIZE, 10) };
-        memcpy(p, desc, sizeof(desc));
-        p += sizeof(desc);
-    }
-    if (ITF_KEYBOARD != ITF_INVALID) {
-        TUSB_DESC_TOTAL_LEN += TUD_HID_DESC_LEN;
-        const uint8_t desc_kb[] = { TUD_HID_DESCRIPTOR(ITF_KEYBOARD, ITF_KEYBOARD + 6, HID_ITF_PROTOCOL_NONE, sizeof(desc_hid_report_kb), (uint8_t)TUSB_DIR_IN_MASK | EPNUM_HID_KB, 16, 5) };
-        memcpy(p, desc_kb, sizeof(desc_kb));
-        p += sizeof(desc_kb);
-    }
-#endif
 #ifdef USB_ITF_CCID
     if (ITF_CCID != ITF_INVALID) {
         TUSB_DESC_TOTAL_LEN += TUSB_SMARTCARD_CCID_DESC_LEN;
@@ -195,6 +181,20 @@ void usb_desc_setup(void) {
         const uint8_t desc_wcid[] = { TUD_SMARTCARD_DESCRIPTOR_WEB(ITF_WCID, ITF_WCID + 6, EPNUM_WCID, TUSB_DIR_IN_MASK | EPNUM_WCID, 64) };
         memcpy(p, desc_wcid, sizeof(desc_wcid));
         p += sizeof(desc_wcid);
+    }
+#endif
+#ifdef USB_ITF_HID
+    if (ITF_HID != ITF_INVALID) {
+        TUSB_DESC_TOTAL_LEN += TUD_HID_INOUT_DESC_LEN;
+        const uint8_t desc[] = { TUD_HID_INOUT_DESCRIPTOR(ITF_HID, ITF_HID + 6, HID_ITF_PROTOCOL_NONE, sizeof(desc_hid_report), EPNUM_HID, (uint8_t)TUSB_DIR_IN_MASK | EPNUM_HID, CFG_TUD_HID_EP_BUFSIZE, 10) };
+        memcpy(p, desc, sizeof(desc));
+        p += sizeof(desc);
+    }
+    if (ITF_KEYBOARD != ITF_INVALID) {
+        TUSB_DESC_TOTAL_LEN += TUD_HID_DESC_LEN;
+        const uint8_t desc_kb[] = { TUD_HID_DESCRIPTOR(ITF_KEYBOARD, ITF_KEYBOARD + 6, HID_ITF_PROTOCOL_NONE, sizeof(desc_hid_report_kb), (uint8_t)TUSB_DIR_IN_MASK | EPNUM_HID_KB, 16, 5) };
+        memcpy(p, desc_kb, sizeof(desc_kb));
+        p += sizeof(desc_kb);
     }
 #endif
 #ifdef USB_ITF_LWIP
