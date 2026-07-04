@@ -31,7 +31,6 @@ idf_component_register(
     REQUIRES
         efuse
         mbedtls
-        mbedtls_eddsa
         picokeys
 )
 
