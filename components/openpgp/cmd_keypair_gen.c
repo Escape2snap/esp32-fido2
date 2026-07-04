@@ -90,6 +90,14 @@ int cmd_keypair_gen(void) {
             if (gid == MBEDTLS_ECP_DP_NONE) {
                 return SW_FUNC_NOT_SUPPORTED();
             }
+#ifdef MBEDTLS_EDDSA_C
+            if (gid == MBEDTLS_ECP_DP_ED25519 || gid == MBEDTLS_ECP_DP_ED448) {
+                // EdDSA key generation needs full Edwards ECP support in ecp.c.
+                // The forked mbedtls provides this, but ESP-IDF's ecp.c doesn't.
+                // Ed25519 keys can be imported via 'key-import' instead.
+                return SW_FUNC_NOT_SUPPORTED();
+            }
+#endif
             mbedtls_ecp_keypair ecdsa;
             mbedtls_ecp_keypair_init(&ecdsa);
             r = mbedtls_ecdsa_genkey(&ecdsa, gid, random_fill_iterator, NULL);
