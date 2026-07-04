@@ -224,7 +224,7 @@ static int cbor_vendor_generic(uint8_t cmd, const uint8_t *data, size_t len) {
             }
             mbedtls_x509write_csr ctx;
             mbedtls_x509write_csr_init(&ctx);
-            snprintf((char *) buffer, sizeof(buffer), "C=ES,O=ESP32Key,OU=Authenticator Attestation,CN=ESP32Key EE Serial %s", pico_serial_str);
+            snprintf((char *) buffer, sizeof(buffer), "C=ES,O=Pico Keys,OU=Authenticator Attestation,CN=Pico Fido EE Serial %s", pico_serial_str);
             mbedtls_x509write_csr_set_subject_name(&ctx, (char *) buffer);
             mbedtls_pk_context key;
             mbedtls_pk_init(&key);

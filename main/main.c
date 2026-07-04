@@ -1,6 +1,6 @@
 /*
  * ESP32-FIDO2 - Main entry point
- * ESP32Key — based on pico-openpgp and pico-keys-sdk (GPL v3 / AGPL v3)
+ * Based on pico-openpgp and pico-keys-sdk (GPL v3 / AGPL v3)
  */
 
 #include <stdio.h>
