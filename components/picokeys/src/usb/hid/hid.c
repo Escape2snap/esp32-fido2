@@ -502,10 +502,10 @@ int driver_process_usb_packet_hid(uint16_t read) {
             thread_type = 1;
 
             if (msg_packet.current_len == msg_packet.len && msg_packet.len > 0) {
-                apdu_sent = apdu_process(ITF_HID, msg_packet.data, msg_packet.len);
+                apdu_sent = apdu_process(ITF_HID_CTAP, msg_packet.data, msg_packet.len);
             }
             else {
-                apdu_sent = apdu_process(ITF_HID, ctap_req->init.data, MSG_LEN(ctap_req));
+                apdu_sent = apdu_process(ITF_HID_CTAP, ctap_req->init.data, MSG_LEN(ctap_req));
             }
             DEBUG_PAYLOAD(apdu.data, (int) apdu.nc);
             msg_packet.len = msg_packet.current_len = 0;
