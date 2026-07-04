@@ -19,9 +19,7 @@
 #include "openpgp.h"
 #include "do.h"
 #include "random.h"
-#ifdef MBEDTLS_EDDSA_C
 #include "eddsa_compat.h"
-#endif
 
 int cmd_keypair_gen(void) {
     if (P2(apdu) != 0x0) {
@@ -88,9 +86,11 @@ int cmd_keypair_gen(void) {
             }
         }
         else if (algo[0] == ALGO_ECDH || algo[0] == ALGO_ECDSA || algo[0] == ALGO_EDDSA) {
-            printf("KEYPAIR ECDSA\r\n");
+            printf("KEYPAIR algo0=%02x alen=%d\r\n", algo[0], algo_len);
             mbedtls_ecp_group_id gid = get_ec_group_id_from_attr(algo + 1, algo_len - 1);
+            printf("KEYPAIR gid=%d\r\n", gid);
             if (gid == MBEDTLS_ECP_DP_NONE) {
+                printf("KEYPAIR gid NONE\r\n");
                 return SW_FUNC_NOT_SUPPORTED();
             }
 #ifdef MBEDTLS_EDDSA_C
