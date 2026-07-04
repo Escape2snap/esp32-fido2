@@ -27,6 +27,7 @@ idf_component_register(
     REQUIRES
         picokeys
         mbedtls
+        mbedtls_eddsa
         tinycbor
 )
 

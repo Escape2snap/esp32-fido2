@@ -5,6 +5,7 @@ set(EXTRA_COMPONENT_DIRS
     components/openpgp
     components/fido
     components/tinycbor
+    components/mbedtls_eddsa
 )
 
 add_compile_definitions(
@@ -12,6 +13,9 @@ add_compile_definitions(
     USB_ITF_WCID=1
     USB_ITF_HID=1
     CFG_TUSB_MCU=OPT_MCU_ESP32S3
+    MBEDTLS_EDDSA_C=1
+    MBEDTLS_ECP_DP_ED25519_ENABLED=1
+    # MBEDTLS_ECP_DP_ED448_ENABLED=1  -- needs SHAKE256, not in ESP-IDF
 )
 
 set(CFG_TUSB_CONFIG_FILE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/components/picokeys/src/usb/tusb_config.h")
