@@ -119,19 +119,19 @@ static const uint8_t ed25519_p[32] = {
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f
 };
 
-/* Ed25519 base point B_y */
-static const uint8_t ed25519_By[32] = {
-    0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66
-};
-/* Ed25519 base point B_x (recovered from y) */
+/* Ed25519 base point B_x (big-endian) — matches mbedtls fork ecp_use_ed25519 */
 static const uint8_t ed25519_Bx[32] = {
-    0x21, 0x69, 0x36, 0xd3, 0xcd, 0x6e, 0x53, 0xfe,
-    0xc0, 0xa4, 0xe2, 0x31, 0xfd, 0xd6, 0xdc, 0x5c,
-    0x69, 0x2c, 0xcc, 0x76, 0x94, 0xaa, 0x12, 0x3c,
-    0x0c, 0xef, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    0x21, 0x69, 0x36, 0xD3, 0xCD, 0x6E, 0x53, 0xFE,
+    0xC0, 0xA4, 0xE2, 0x31, 0xFD, 0xD6, 0xDC, 0x5C,
+    0x69, 0x2C, 0xC7, 0x60, 0x95, 0x25, 0xA7, 0xB2,
+    0xC9, 0x56, 0x2D, 0x60, 0x8F, 0x25, 0xD5, 0x1A
+};
+/* Ed25519 base point B_y (big-endian) */
+static const uint8_t ed25519_By[32] = {
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x58
 };
 
 static void ed25519_mont_reduce(mbedtls_mpi *r, const mbedtls_mpi *a) {
@@ -202,6 +202,7 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
     mbedtls_mpi_lset(&Z2, 1); mbedtls_mpi_lset(&T2, 0);
 
     for (int i = 255; i >= 0; i--) {
+        if (i % 32 == 0) printf("Ed25519 keygen: %d/256\n", 256-i);
         /* Double current point */
         MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&a, &X2, &X2)); /* A = X^2 */
         MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&b, &Y2, &Y2)); /* B = Y^2 */
@@ -212,7 +213,10 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
         MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&e, &a, &b));    /* E = A - B */
         MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&f, &d, &c));    /* F = D + C */
         MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&g, &d, &c));    /* G = D - C */
-        MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&h, &b, &a));    /* H = B + A */
+        /* H = 2 * Y * Z (HWCD extended coordinates doubling, a = -1) */
+        MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&h, &Y2, &Z2));
+        ed25519_mont_reduce(&h, &h);
+        MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&h, &h, &two));
         ed25519_mont_reduce(&h, &h);
         MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&X2, &e, &f));
         MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&Y2, &g, &h));
@@ -249,15 +253,7 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
     }
 
     /* Convert to affine: x = X/Z, y = Y/Z */
-    MBEDTLS_MPI_CHK(mbedtls_mpi_inv_mod(&d_inv, &Z2, &p));
-    MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&key->Q.X, &X2, &d_inv));
-    MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&key->Q.Y, &Y2, &d_inv));
-    mbedtls_mpi_lset(&key->Q.Z, 1);
-    ed25519_mont_reduce(&key->Q.X, &key->Q.X);
-    ed25519_mont_reduce(&key->Q.Y, &key->Q.Y);
-
-    printf("Ed25519 keygen: point mult done, normalizing\n");
-    /* Normalize: x = X/Z, y = Y/Z */
+    printf("Ed25519 keygen: loop done\n");
     MBEDTLS_MPI_CHK(mbedtls_mpi_inv_mod(&d_inv, &Z2, &p));
     MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&key->Q.X, &X2, &d_inv));
     MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&key->Q.Y, &Y2, &d_inv));
@@ -267,6 +263,8 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
 
     /* Copy group modulus P for make_ecdsa_response */
     mbedtls_mpi_copy(&key->grp.P, &p);
+    key->grp.pbits = 255;
+    key->grp.nbits = 254;
     /* Set generator G = (Bx, By) */
     mbedtls_mpi_copy(&key->grp.G.X, &bp_x);
     mbedtls_mpi_copy(&key->grp.G.Y, &bp_y);
