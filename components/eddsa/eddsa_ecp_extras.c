@@ -154,6 +154,7 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
     mbedtls_mpi tx, ty, tz, tt;
     mbedtls_mpi two, scalar, bp_x, bp_y, ed_d;
 
+    printf("Ed25519 keygen: entering\n");
     /* Generate 32 random bytes as seed */
     f_rng(p_rng, seed, 32);
 
@@ -255,6 +256,15 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
     ed25519_mont_reduce(&key->Q.X, &key->Q.X);
     ed25519_mont_reduce(&key->Q.Y, &key->Q.Y);
 
+    printf("Ed25519 keygen: point mult done, normalizing\n");
+    /* Normalize: x = X/Z, y = Y/Z */
+    MBEDTLS_MPI_CHK(mbedtls_mpi_inv_mod(&d_inv, &Z2, &p));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&key->Q.X, &X2, &d_inv));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&key->Q.Y, &Y2, &d_inv));
+    mbedtls_mpi_lset(&key->Q.Z, 1);
+    ed25519_mont_reduce(&key->Q.X, &key->Q.X);
+    ed25519_mont_reduce(&key->Q.Y, &key->Q.Y);
+
     /* Copy group modulus P for make_ecdsa_response */
     mbedtls_mpi_copy(&key->grp.P, &p);
     /* Set generator G = (Bx, By) */
@@ -265,6 +275,7 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
     /* Set private key scalar */
     mbedtls_mpi_copy(&key->d, &scalar);
 
+    printf("Ed25519 keygen: success\n");
     ret = 0;
 cleanup:
     mbedtls_mpi_free(&p); mbedtls_mpi_free(&d_inv);
