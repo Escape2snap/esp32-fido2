@@ -161,6 +161,47 @@ for dev in CtapHidDevice.list_devices():
 
 ---
 
+## Debug Mode
+
+The `feat/debug` branch adds a Kconfig-controlled debug mode
+for development and troubleshooting.  Cherry-pick onto any
+working branch:
+
+```bash
+git checkout feat/ed25519    # or any branch
+git cherry-pick a95cc36      # the debug commit
+```
+
+Enable via `idf.py menuconfig` → **Debug Mode**:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `DEBUG_ENABLE` | n | Master switch |
+| `DEBUG_APDU_HEX` | y¹ | Hex dump all APDU commands/responses |
+| `DEBUG_PERF` | y¹ | Timing markers for key derivation, signing, flash |
+| `DEBUG_STACK` | n | Periodic free-stack report for core0_loop |
+| `DEBUG_WDT_FEED` | n | `esp_task_wdt_reset()` inside long-running loops |
+| `DEBUG_WDT_FEED_INTERVAL_MS` | 500 | WDT feed interval (100–5000 ms) |
+
+¹ *Only visible when `DEBUG_ENABLE` is set.*
+
+### Console Output (example)
+
+```
+[perf] derive_key: 15234 us
+[perf] credential_create: 8912 us
+[stack] core0: 2048 bytes free
+[fido-req] 90010A4700...
+[fido-resp] 00...
+```
+
+When `DEBUG_WDT_FEED` is enabled, the hardware watchdog is
+automatically reset during long crypto operations (HKDF chains,
+Ed25519 scalar multiplication) at the configured interval, preventing
+watchdog-triggered reboots during operations that take > 10 s.
+
+---
+
 ## Platform Notes
 
 | Feature | Linux | Windows |

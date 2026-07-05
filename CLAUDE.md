@@ -167,6 +167,50 @@ loads stale data and fails.
 - Driver: `components/picokeys/src/led/led_neopixel.c`
 - Mode format in `led.h`: (brightness << shift | color << shift | on_ms << shift | off_ms << shift)
 
+## Debug Mode (feat/debug Branch)
+
+A Kconfig-controlled debug framework is available on the `feat/debug`
+branch.  Cherry-pick onto any working branch:
+
+```bash
+git checkout feat/ed25519
+git cherry-pick a95cc36
+```
+
+### Available options (`idf.py menuconfig → Debug Mode`)
+
+| Symbol | Default | Effect |
+|--------|---------|--------|
+| `CONFIG_DEBUG_ENABLE` | n | Master switch |
+| `CONFIG_DEBUG_APDU_HEX` | y | Hex dump APDUs via `fido_process_apdu()` |
+| `CONFIG_DEBUG_PERF` | y | Timing via `PERF_START()` / `PERF_END()` |
+| `CONFIG_DEBUG_STACK` | n | Stack high-water via `uxTaskGetStackHighWaterMark()` |
+| `CONFIG_DEBUG_WDT_FEED` | n | WDT reset in long loops |
+
+### Macros (defined in `components/fido/debug_mode.h`)
+
+- `PERF_START()` / `PERF_END(msg)` — elapsed-time markers
+- `APDU_TRACE(tag, data, len)` — hex dump
+- `WDT_FEED()` — periodic `esp_task_wdt_reset()`
+
+When debugging is disabled (`CONFIG_DEBUG_ENABLE=n`, the default),
+all macros expand to nothing — zero overhead in production builds.
+
+### Stack Monitoring
+
+```c
+// main/main.c: core0_loop() — logs every ~10 s
+[stack] core0_loop: 1024 bytes free
+[stack] core0: 2048 bytes free
+```
+
+### WDT Feeding for Ed25519
+
+On the `feat/ed25519` branch where Ed25519 scalar multiplication
+takes ~8 s, enable `CONFIG_DEBUG_WDT_FEED` to prevent Task WDT
+timeouts.  The `WDT_FEED()` macro is placed inside the HKDF chain
+loop in `derive_key()` and can be added to any long-running loop.
+
 ## Commit Convention
 
 ```
