@@ -38,10 +38,10 @@
      XTOS_SET_INTLEVEL/XTOS_RESTORE_INTLEVEL are the standard Xtensa
      macros available through the FreeRTOS Xtensa portmacro.h. */
   #include "xtensa/config/core.h"
-  /* PORTABLE_LEVEL is the interrupt level the FreeRTOS kernel uses
-     (typically XCHAL_EXCM_LEVEL) — disabling it masks all ISRs. */
+  /* Level 15 (NMI) masks ALL interrupts including USB.  The flash
+     erase/write window is short (~10-100 ms) so this is safe.  */
   #define save_and_disable_interrupts() \
-      ({ uint32_t __l = XTOS_SET_INTLEVEL(XCHAL_EXCM_LEVEL); __l; })
+      ({ uint32_t __l = XTOS_SET_INTLEVEL(15); __l; })
   #define restore_interrupts(a) \
       XTOS_RESTORE_INTLEVEL(a)
   #define flash_range_erase(a,b) esp_partition_erase_range(part0, a, b)
