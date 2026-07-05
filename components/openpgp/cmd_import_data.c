@@ -180,7 +180,7 @@ int cmd_import_data(void) {
 #endif
         if (gid == MBEDTLS_ECP_DP_CURVE25519) {
             mbedtls_ecp_group_load(&ecdsa.grp, gid);
-            r = mbedtls_mpi_read_binary(&ecdsa.d, p[1], len[1]);
+            r = mbedtls_mpi_read_binary_le(&ecdsa.d, p[1], len[1]);
         }
         else {
             r = mbedtls_ecp_read_key(gid, &ecdsa, p[1], len[1]);
