@@ -243,6 +243,13 @@ void low_flash_init(void) {
     data_end_addr = FLASH_SIZE_BYTES;
 #endif
     flash_set_bounds(data_start_addr, data_end_addr);
+#ifdef ESP_PLATFORM
+    /* On ESP32 the flash write gate starts open — FIDO2 runs on core 0 and
+       never calls card_start() → low_flash_init_core1(), so locked_out
+       would remain false and low_flash_task() would skip all writes. */
+    locked_out = true;
+    flash_available = true;
+#endif
 }
 
 void low_flash_init_core1(void) {
