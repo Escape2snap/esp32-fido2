@@ -539,7 +539,7 @@ bool check_user_presence(void) {
         if (wait_button_pressed() > 0) { //timeout
             return false;
         }
-        //user_present_time_limit = board_millis();
+        user_present_time_limit = board_millis();
     }
     return true;
 }

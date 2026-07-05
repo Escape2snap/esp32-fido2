@@ -112,7 +112,7 @@ void append_keyboard_buffer(const uint8_t *buf, size_t len) {
 #define OATH_FIXED_MASK     0x50    // Mask to get out fixed flags
 #define CFGFLAG_UPDATE_MASK (PACING_10MS | PACING_20MS)
 
-static uint8_t config_seq = { 1 };
+static uint8_t config_seq = 1;
 
 PACK(
 typedef struct otp_config {
