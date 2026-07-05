@@ -40,8 +40,7 @@
   #define save_and_disable_interrupts() 0
   #define restore_interrupts(a) ((void)(a))
   #define flash_range_erase(a,b) esp_partition_erase_range(part0, a, b)
-  #define flash_range_program(a,b,c) esp_partition_write(part0, a, b, c);
- #else
+  #define flash_range_program(a,b,c) esp_partition_write(part0, a, b, c); #else
   #ifdef _MSC_VER
    #include <windows.h>
    #include <io.h>

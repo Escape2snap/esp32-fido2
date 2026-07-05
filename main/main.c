@@ -144,7 +144,7 @@ static void core0_loop(void *arg) {
         log_stack_high_water();
 #ifdef ESP_PLATFORM
         /* Feed WDT — flash commits and long-running Ed25519 operations
-           on core 1 must not starve core 0's watchdog. */
+           on core 1 must not starve core 0's watchdog. */
         esp_task_wdt_reset();
 #endif
         vTaskDelay(pdMS_TO_TICKS(10));
