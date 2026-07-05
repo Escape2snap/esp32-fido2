@@ -52,11 +52,17 @@ static int fe_ok = 0;
 
 static void fe_init(void) {
     if (fe_ok) return;
-    fe25519_from_bytes(&bX, BE_Bx);
-    fe25519_from_bytes(&bY, BE_By);
+    /* BE_Bx/BE_By are stored as big-endian bytes but fe25519_from_bytes()
+       reads little-endian.  Convert via MPI to get the correct byte order. */
+    {   mbedtls_mpi _t;
+        mbedtls_mpi_init(&_t);
+        mbedtls_mpi_read_binary(&_t, BE_Bx, 32); fe25519_from_mpi(&bX, &_t);
+        mbedtls_mpi_read_binary(&_t, BE_By, 32); fe25519_from_mpi(&bY, &_t);
+        mbedtls_mpi_read_binary(&_t, BE_2d, 32); fe25519_from_mpi(&d2, &_t);
+        mbedtls_mpi_read_binary(&_t, BE_l,  32); fe25519_from_mpi(&grp_l, &_t);
+        mbedtls_mpi_free(&_t);
+    }
     fe25519_mul(&bT, &bX, &bY);
-    fe25519_from_bytes(&d2, BE_2d);
-    fe25519_from_bytes(&grp_l, BE_l);
     fe_ok = 1;
 }
 
