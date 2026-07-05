@@ -59,7 +59,7 @@ The `feat/ed25519` branch adds Ed25519 (EdDSA) and X25519 (Curve25519 ECDH) supp
 
 | Feature | Status | Note |
 |---------|--------|------|
-| Ed25519 key generation | ✅ | Self-contained implementation (no mbedtls fork dependency) |
+| Ed25519 key generation | ✅ | Self-contained fe25519 field arithmetic |
 | Ed25519 signing | ✅ | Both OpenPGP and FIDO2 paths |
 | X25519 ECDH | 🚧 | Key generation works, PSO:DEC ECDH path incomplete |
 | Key import/export | ✅ | Ed25519 import path added |
@@ -69,8 +69,18 @@ The `feat/ed25519` branch adds Ed25519 (EdDSA) and X25519 (Curve25519 ECDH) supp
 **Status:** On hold — the 8-second keygen time causes PC/SC interface timeouts in GPG.
 A dedicated 25519 field arithmetic implementation would bring this to milliseconds.
 
+**Extra dependency:** This branch needs `polhenarejos/mbedtls` (`mbedtls-3.6-eddsa` branch)
+for EdDSA support. `third-party/` is gitignored, so clone manually:
+
 ```bash
 git checkout feat/ed25519
+git clone --branch mbedtls-3.6-eddsa \
+    https://github.com/polhenarejos/mbedtls.git \
+    third-party/mbedtls-fork
+cd third-party/mbedtls-fork
+git submodule update --init --depth 1
+cd ..
+idf.py set-target esp32s3
 idf.py build
 ```
 
@@ -99,8 +109,13 @@ cd ~/esp-idf-v5.4.4
 . ./export.sh
 cd ~/esp32-fido2
 
+# Clone third-party dependencies (see Dependency Notes in CLAUDE.md)
+git clone https://github.com/intel/tinycbor.git third-party/tinycbor
+cp third-party/tinycbor/src/tinycbor-export.h.in third-party/tinycbor/src/tinycbor-export.h
+# then create third-party/tinycbor/src/tinycbor-version.h manually
+
 # First time: clean flash
-idf.py set-target esp32s3
+idf.py set-target esp32s3    # ⚠️ required (tinyusb doesn't support default esp32)
 idf.py build
 idf.py -p /dev/ttyACM0 erase-flash
 idf.py -p /dev/ttyACM0 flash
