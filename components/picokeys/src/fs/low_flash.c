@@ -38,10 +38,16 @@
      XTOS_SET_INTLEVEL/XTOS_RESTORE_INTLEVEL are the standard Xtensa
      macros available through the FreeRTOS Xtensa portmacro.h. */
   #include "xtensa/config/core.h"
-  /* Level 15 (NMI) masks ALL interrupts including USB.  The flash
-     erase/write window is short (~10-100 ms) so this is safe.  */
+  /* Level 15 (NMI) masks ALL interrupts on the current core, but on
+     a dual-core ESP32-S3 we must also stall core 1 so its ISRs don't
+     fire during the cache-disabled flash window.  */
+  #include "esp_cpu.h"
   #define save_and_disable_interrupts() \
-      ({ uint32_t __l = XTOS_SET_INTLEVEL(15); __l; })
+      ({ esp_cpu_stall(1); \
+         uint32_t __l = XTOS_SET_INTLEVEL(15); __l; })
+  #define restore_interrupts(a) \
+      ({ XTOS_RESTORE_INTLEVEL(a); \
+         esp_cpu_unstall(1); })
   #define restore_interrupts(a) \
       XTOS_RESTORE_INTLEVEL(a)
   #define flash_range_erase(a,b) esp_partition_erase_range(part0, a, b)
