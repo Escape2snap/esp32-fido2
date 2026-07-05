@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "driver/gpio.h"
 #include "rom/gpio.h"
+#include "esp_task_wdt.h"
 #include "tinyusb.h"
 #include "tusb.h"
 #include "compat/esp_compat.h"
@@ -112,6 +113,12 @@ static void core0_loop(void *arg) {
         hwrng_task();
         flash_task();
         button_task();
+#ifdef ESP_PLATFORM
+        /* Feed Task WDT — flash commits and long operations must not
+           starve the watchdog.  Without this, keygen and other ops
+           that batch flash writes can exceed CONFIG_ESP_TASK_WDT_TIMEOUT_S. */
+        esp_task_wdt_reset();
+#endif
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
