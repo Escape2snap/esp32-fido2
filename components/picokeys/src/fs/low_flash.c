@@ -32,22 +32,12 @@
   #include "compat/esp_compat.h"
   #include "esp_partition.h"
   const esp_partition_t *part0;
-  /* Disable/enable all interrupts while flash is being erased/written.
-     Without this guard, a USB ISR may fire during the cache-disabled
-     window and trigger a Guru Meditation crash.
-     XTOS_SET_INTLEVEL/XTOS_RESTORE_INTLEVEL are the standard Xtensa
-     macros available through the FreeRTOS Xtensa portmacro.h. */
-  #include "xtensa/config/core.h"
-  /* Level 15 (NMI) masks ALL interrupts on the current core, but on
-     a dual-core ESP32-S3 we must also stall core 1 so its ISRs don't
-     fire during the cache-disabled flash window.  */
-  #include "esp_cpu.h"
-  #define save_and_disable_interrupts() \
-      ({ esp_cpu_stall(1); \
-         uint32_t __l = XTOS_SET_INTLEVEL(15); __l; })
-  #define restore_interrupts(a) \
-      ({ XTOS_RESTORE_INTLEVEL(a); \
-         esp_cpu_unstall(1); })
+  /* ESP-IDF's esp_partition_erase_range / esp_partition_write manage
+     cache and interrupts internally via the flash guard; no manual
+     interrupt masking needed.  (Dual-core systems must let core 1
+     run to feed its watchdog.) */
+  #define save_and_disable_interrupts() 1
+  #define restore_interrupts(a) (void)a
   #define restore_interrupts(a) \
       XTOS_RESTORE_INTLEVEL(a)
   #define flash_range_erase(a,b) esp_partition_erase_range(part0, a, b)

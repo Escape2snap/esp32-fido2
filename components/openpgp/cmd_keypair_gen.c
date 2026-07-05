@@ -197,14 +197,7 @@ keygen_done:
         if (!file_has_data(algo_ef)) {
             file_put_data(algo_ef, algo_attr + 1, algo_attr[0]);
         }
-        // Ensure the PB file data is committed to flash before
-        // we return — GPG immediately reads it back via P1=0x81.
-        // The async flash_commit delegates to low_flash_task() which
-        // runs in core0_loop every 10ms; the read would arrive
-        // before that window and find no data (6A 88).
-        // Synchronous commit is now safe because low_flash.c
-        // properly disables interrupts during erase/write.
-        flash_commit_sync(500);
+        flash_commit();
         return SW_OK();
     }
     else if (P1(apdu) == 0x81) { //read

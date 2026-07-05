@@ -197,22 +197,11 @@ void flash_commit(void) {
 
 
 extern uint8_t ready_pages;
-#if defined(ESP_PLATFORM)
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#endif
 bool flash_commit_sync(uint32_t timeout_ms) {
     flash_commit();
     uint32_t deadline = board_millis() + timeout_ms;
     while (ready_pages > 0 && board_millis() < deadline) {
         low_flash_task();
-        /* Yield between iterations so the USB ISR can run and
-           complete any pending transfers.  Without the yield the
-           ISR may fire during the next flash operation (when cache
-           is disabled) and trigger a Guru Meditation crash. */
-#if defined(ESP_PLATFORM)
-        vTaskDelay(1);
-#endif
     }
     return ready_pages == 0;
 }
