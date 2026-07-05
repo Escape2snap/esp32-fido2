@@ -876,6 +876,11 @@ void make_ecdsa_response(mbedtls_ecp_keypair *ecdsa) {
         /* X25519: 32-byte little-endian u-coordinate */
         mbedtls_mpi_write_binary_le(&ecdsa->Q.X, pt, 32);
         plen = 32;
+#if defined(CONFIG_DEBUG_ENABLE) && defined(CONFIG_DEBUG_APDU_HEX)
+        printf("[dbg] make_ecdsa X25519 u=");
+        for (int _i = 0; _i < 32; _i++) printf("%02X", pt[_i]);
+        printf("\r\n");
+#endif
     }
     else
 #endif
@@ -893,6 +898,13 @@ void make_ecdsa_response(mbedtls_ecp_keypair *ecdsa) {
     res_APDU[res_APDU_size++] = plen;
     memcpy(res_APDU + res_APDU_size, pt, plen);
     res_APDU_size += plen;
+#if defined(CONFIG_DEBUG_ENABLE) && defined(CONFIG_DEBUG_APDU_HEX)
+    {
+        printf("[dbg] make_ecdsa final APDU (%d bytes): ", res_APDU_size);
+        for (int _i = 0; _i < res_APDU_size; _i++) printf("%02X", res_APDU[_i]);
+        printf("\r\n");
+    }
+#endif
 }
 
 int rsa_sign(mbedtls_rsa_context *ctx, const uint8_t *data, size_t data_len, uint8_t *out, size_t *out_len) {

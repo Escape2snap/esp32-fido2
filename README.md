@@ -40,6 +40,7 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 | ECDSA (P-256, P-384, P-521, secp256k1) | ✅ |
 | Brainpool (256r1, 384r1, 512r1) | ✅ |
 | Curve25519 (X25519 ECDH) | ✅ |
+| Ed25519 (EdDSA) | ✅ |
 | On-device key generation | ✅ |
 | Key import/export | ✅ |
 | PIN & Admin PIN protection | ✅ |
@@ -159,25 +160,58 @@ for dev in CtapHidDevice.list_devices():
 "
 ```
 
+### Verifying Ed25519 Keys (Debug Mode)
+
+When CONFIG_DEBUG_APDU_HEX is enabled, the firmware prints the raw key
+material to serial during Ed25519 key generation:
+
+```
+[dbg] Ed25519 seed:          <32-byte hex — the private key seed>
+[dbg] Ed25519 Q.x (LE):     <32-byte hex — public key x (little-endian)>
+[dbg] Ed25519 Q.y (LE):     <32-byte hex — public key y (little-endian)>
+[dbg] make_ecdsa Ed25519... <32-byte hex — RFC 8032 encoded public key>
+[dbg] make_ecdsa final APDU <full 7F 49 response including SW>
+```
+
+To verify that the card computed the correct public key:
+
+1. Extract the seed hex from the serial output (first `[dbg] Ed25519 seed:` line)
+2. Compute the expected public key with Python:
+
+```python
+import hashlib
+
+seed = bytes.fromhex("<paste seed hex here>")
+# SHA-512(seed), clamp
+h = hashlib.sha512(seed).digest()
+scalar = bytearray(h[:32])
+scalar[0] &= 248; scalar[31] &= 63; scalar[31] |= 64
+
+# The clamped scalar is used for EC point multiplication s * B
+# (requires an Ed25519 library like nacl or cryptography)
+```
+
+Or extract the GPG public key for comparison:
+
+```bash
+gpg --export --export-options export-minimal --armor <KEYID> | gpg --list-packets
+```
+
+The serial output `[dbg] Ed25519 Q.y (LE)` should match the y-coordinate
+in the GPG public key packet.
+
 ---
 
 ## Debug Mode
 
-The `feat/debug` branch adds a Kconfig-controlled debug mode
-for development and troubleshooting.  Cherry-pick onto any
-working branch:
-
-```bash
-git checkout feat/ed25519    # or any branch
-git cherry-pick a95cc36      # the debug commit
-```
-
-Enable via `idf.py menuconfig` → **Debug Mode**:
+Debug output (Ed25519 seed, public key, APDU hex dumps) is **built into
+the `feat/ed25519` branch**.  Enable via `idf.py menuconfig` → **Debug
+Mode**:
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `DEBUG_ENABLE` | n | Master switch |
-| `DEBUG_APDU_HEX` | y¹ | Hex dump all APDU commands/responses |
+| `DEBUG_APDU_HEX` | y¹ | Hex dump APDUs + Ed25519 key material |
 | `DEBUG_PERF` | y¹ | Timing markers for key derivation, signing, flash |
 | `DEBUG_STACK` | n | Periodic free-stack report for core0_loop |
 | `DEBUG_WDT_FEED` | n | `esp_task_wdt_reset()` inside long-running loops |
@@ -225,6 +259,10 @@ A 100ms startup delay is built into the firmware to minimize this.
 - **CCID+HID coexistence:** Windows `usbccgp.sys` handles CCID and HID
   interfaces better on reboot. If the smartcard reader doesn't appear,
   reconnect the device.
+- **Ed25519 key generation is slow (~8 s):** The dedicated fe25519 field
+  arithmetic (components/eddsa/) is ~100× faster than generic mbedTLS bignum,
+  but still slower than the HW ECC accelerator (which doesn't support
+  Edwards curves).  CCID timeout was increased to 10 s to accommodate this.
 
 ---
 

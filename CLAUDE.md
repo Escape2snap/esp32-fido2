@@ -137,10 +137,11 @@ key. See the `if (!file_has_data(algo_ef))` block in `cmd_keypair_gen.c`.
 | secp256k1 | ✅ | ✅ | ✅ | — |
 | brainpool* | ✅ | ✅ | ✅ | ⚠️ No HW ECC support on ESP32-S3 |
 | Curve25519 (X25519) | ❌ | ✅ | ❌ | — |
-| Ed25519 | ✅ | ❌ | ✅ | `ENABLE_EDDSA` + mbedTLS fork |
+| Ed25519 | ✅ | ❌ | ✅ | Dedicated fe25519 field arithmetic |
 
-> Brainpool curves are defined in ESP-IDF but the HW ECC accelerator
-> only supports NIST curves. Key generation and signing will fail.
+> Ed25519 is implemented with self-contained fe25519 field arithmetic
+> (components/eddsa/) — not the generic mbedTLS ECP layer.  X25519 uses
+> mbedTLS's built-in Curve25519 support (MBEDTLS_ECP_DP_CURVE25519).
 
 ### Flash Commit Async Issue
 
@@ -151,6 +152,24 @@ loads stale data and fails.
 
 **Fix:** `flash_commit_sync()` in `flash.c` busy-waits calling
 `low_flash_task()` until `ready_pages == 0`.
+
+> **Note:** `flash_commit_sync` was reverted in commit 8ea5467 because it
+> could cause Guru Meditation crashes on ESP32-S3 dual-core.  The current
+> code uses `flash_commit()` + `vTaskDelay(1) * 3` which gives the main
+> loop 30ms to process pending pages.  For Ed25519 keygen this is normally
+> sufficient because the ~8s scalar multiplication gives core 0 plenty of
+> time to drain the flash queue while keygen runs on core 1.
+
+### CCID Timeout for Ed25519
+
+Ed25519 scalar multiplication takes ~8 s on the ESP32-S3.  The CCID timeout
+was originally 1500 ms (set in `driver_init_ccid()`).  Even though the
+firmware sends `CCID_CMD_STATUS_TIMEEXT` requests, GPG's CCID driver may
+not handle them correctly.
+
+**Fix (PR #4):** Increased CCID timeout from 1500 ms → 10000 ms in
+`components/picokeys/src/usb/ccid/ccid.c:161`.  This covers the full
+Ed25519 keygen within a single timeout window, avoiding time extensions.
 
 ---
 
@@ -167,14 +186,21 @@ loads stale data and fails.
 - Driver: `components/picokeys/src/led/led_neopixel.c`
 - Mode format in `led.h`: (brightness << shift | color << shift | on_ms << shift | off_ms << shift)
 
-## Debug Mode (feat/debug Branch)
+## Debug Mode
 
-A Kconfig-controlled debug framework is available on the `feat/debug`
-branch.  Cherry-pick onto any working branch:
+A Kconfig-controlled debug framework is **built into the `feat/ed25519`
+branch** (commit `d586d1d`).  No cherry-pick needed.
+
+### Enabling Debug Output
 
 ```bash
-git checkout feat/ed25519
-git cherry-pick a95cc36
+idf.py menuconfig
+# → Debug Mode → Enable debug mode [*]
+# → Debug Mode → APDU hex dump [*]
+# Save & exit
+idf.py build
+idf.py -p /dev/ttyACM0 flash
+idf.py -p /dev/ttyACM0 monitor
 ```
 
 ### Available options (`idf.py menuconfig → Debug Mode`)
@@ -182,7 +208,7 @@ git cherry-pick a95cc36
 | Symbol | Default | Effect |
 |--------|---------|--------|
 | `CONFIG_DEBUG_ENABLE` | n | Master switch |
-| `CONFIG_DEBUG_APDU_HEX` | y | Hex dump APDUs via `fido_process_apdu()` |
+| `CONFIG_DEBUG_APDU_HEX` | y | Hex dump APDUs + Ed25519 key material |
 | `CONFIG_DEBUG_PERF` | y | Timing via `PERF_START()` / `PERF_END()` |
 | `CONFIG_DEBUG_STACK` | n | Stack high-water via `uxTaskGetStackHighWaterMark()` |
 | `CONFIG_DEBUG_WDT_FEED` | n | WDT reset in long loops |
