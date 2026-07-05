@@ -18,6 +18,7 @@ add_compile_definitions(
 set(CFG_TUSB_CONFIG_FILE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/components/picokeys/src/usb/tusb_config.h")
 add_compile_definitions(CFG_TUSB_CONFIG_FILE="${CFG_TUSB_CONFIG_FILE_PATH}")
 
+
 # Auto-create device_config.h from template if missing
 if(NOT EXISTS "${CMAKE_SOURCE_DIR}/main/device_config.h")
     configure_file(
