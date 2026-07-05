@@ -341,7 +341,7 @@ int credential_load(const uint8_t *cred_id, size_t cred_id_len, const uint8_t *r
     else {
         CborParser parser;
         CborValue map;
-        memset(cred, 0, sizeof(Credential));
+        // cred cleared above via memset, no need to repeat
         cred->curve = FIDO2_CURVE_P256;
         cred->alg = FIDO2_ALG_ES256;
         CBOR_CHECK(cbor_parser_init(copy_cred_id + 4 + 12, cred_id_len - (4 + 12 + 16), 0, &parser, &map));

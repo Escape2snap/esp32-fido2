@@ -42,6 +42,7 @@ int cbor_config(const uint8_t *data, size_t len) {
     CborEncoder encoder;
     //CborEncoder mapEncoder;
     uint8_t *raw_subpara = NULL;
+    uint8_t *verify_payload = NULL;
     const bool *forceChangePin = NULL, *pinPolicy = NULL;
 
     CBOR_CHECK(cbor_parser_init(data, len, 0, &parser, &map));
@@ -128,13 +129,12 @@ int cbor_config(const uint8_t *data, size_t len) {
         CBOR_ERROR(CTAP1_ERR_INVALID_PARAMETER);
     }
 
-    uint8_t *verify_payload = (uint8_t *) calloc(1, 32 + 1 + 1 + raw_subpara_len);
+    verify_payload = (uint8_t *) calloc(1, 32 + 1 + 1 + raw_subpara_len);
     memset(verify_payload, 0xff, 32);
     verify_payload[32] = 0x0d;
     verify_payload[33] = (uint8_t)subcommand;
     memcpy(verify_payload + 34, raw_subpara, raw_subpara_len);
     error = verify((uint8_t)pinUvAuthProtocol, paut.data, verify_payload, (uint16_t)(32 + 1 + 1 + raw_subpara_len), pinUvAuthParam.data);
-    free(verify_payload);
     if (error != CborNoError) {
         CBOR_ERROR(CTAP2_ERR_PIN_AUTH_INVALID);
     }
@@ -294,6 +294,7 @@ err:
     CBOR_FREE_BYTE_STRING(pinUvAuthParam);
     CBOR_FREE_BYTE_STRING(vendorParamByteString);
     CBOR_FREE_BYTE_STRING(vendorParamTextString);
+    free(verify_payload);
     for (size_t i = 0; i < minPinLengthRPIDs_len; i++) {
         CBOR_FREE_BYTE_STRING(minPinLengthRPIDs[i]);
     }
