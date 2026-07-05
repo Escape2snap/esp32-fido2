@@ -10,16 +10,6 @@
 #include "mbedtls/bignum.h"
 #include "mbedtls/error.h"
 #include "eddsa_compat.h"
-#ifdef ESP_PLATFORM
-#include "esp_task_wdt.h"
-#define ED25519_WDT_RESET() esp_task_wdt_reset()
-#define ED25519_WDT_ADD()   esp_task_wdt_add(NULL)
-#define ED25519_WDT_DEL()   esp_task_wdt_delete(NULL)
-#else
-#define ED25519_WDT_RESET()
-#define ED25519_WDT_ADD()
-#define ED25519_WDT_DEL()
-#endif
 
 /* ------------------------------------------------------------------ */
 /* mbedtls_ecp_point_encode — Edwards version (mpi output)            */
@@ -572,6 +562,8 @@ int ed25519_compute_public(mbedtls_ecp_keypair *key) {
     hash[0] &= 248; hash[31] &= 63; hash[31] |= 64;
     MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(&scalar, hash, 32));
 
+    ED25519_WDT_ADD();
+
     /* Set base point extended coords */
     mbedtls_mpi_copy(&X1, &bp_x); mbedtls_mpi_copy(&Y1, &bp_y);
     mbedtls_mpi_lset(&Z1, 1);
@@ -640,6 +632,7 @@ int ed25519_compute_public(mbedtls_ecp_keypair *key) {
     ret = 0;
 
 cleanup:
+    ED25519_WDT_DEL();
     mbedtls_mpi_free(&p); mbedtls_mpi_free(&scalar);
     mbedtls_mpi_free(&bp_x); mbedtls_mpi_free(&bp_y);
     mbedtls_mpi_free(&ed_d); mbedtls_mpi_free(&two);

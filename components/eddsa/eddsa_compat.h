@@ -29,6 +29,18 @@
 #define MBEDTLS_ERR_ECP_FEATURE_UNAVAILABLE (-0x4E80)
 #endif
 
+/* Task WDT management for long-running Ed25519 scalar multiplication */
+#ifdef ESP_PLATFORM
+#include "esp_task_wdt.h"
+#define ED25519_WDT_RESET() esp_task_wdt_reset()
+#define ED25519_WDT_ADD()   esp_task_wdt_add(NULL)
+#define ED25519_WDT_DEL()   esp_task_wdt_delete(NULL)
+#else
+#define ED25519_WDT_RESET()
+#define ED25519_WDT_ADD()
+#define ED25519_WDT_DEL()
+#endif
+
 /* Set up Ed25519 group parameters manually (bypasses system ecp_group_load) */
 int ed25519_setup_group(mbedtls_ecp_group *grp);
 /* Ed25519 self-contained key generation */

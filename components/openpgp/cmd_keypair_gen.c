@@ -130,7 +130,9 @@ int cmd_keypair_gen(void) {
                     mbedtls_ecp_keypair_free(&ecdh);
                     return SW_EXEC_ERROR();
                 }
+                ED25519_WDT_ADD();
                 r = mbedtls_ecp_keypair_calc_public(&ecdh, random_fill_iterator, NULL);
+                ED25519_WDT_DEL();
                 if (r != 0) {
                     mbedtls_ecp_keypair_free(&ecdh);
                     return SW_EXEC_ERROR();
