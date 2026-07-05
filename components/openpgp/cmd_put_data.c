@@ -19,23 +19,17 @@
 
 int cmd_put_data(void) {
     uint16_t fid = (P1(apdu) << 8) | P2(apdu);
-    if (fid == EF_ALGO_SIG || fid == EF_ALGO_DEC || fid == EF_ALGO_AUT) {
-        printf("PUT_DATA algo fid=0x%04x nc=%u\n", (unsigned)fid, (unsigned)apdu.nc);
-        for (int _i = 0; _i < apdu.nc && _i < 16; _i++)
-            printf(" %02x", (unsigned)apdu.data[_i]);
-        printf("\n");
-        fid |= 0x1000;
-    }
     file_t *ef;
     if (fid == EF_RESET_CODE) {
         fid = EF_RC;
     }
+    else if (fid == EF_ALGO_SIG || fid == EF_ALGO_DEC || fid == EF_ALGO_AUT) {
+        fid |= 0x1000;
+    }
     if (!(ef = file_search_by_fid(fid, NULL, SPECIFY_EF))) {
-        printf("PUT_DATA file not found fid=0x%04x\n", (unsigned)fid);
         return SW_REFERENCE_NOT_FOUND();
     }
     if (!file_authenticate_action(ef, ACL_OP_UPDATE_ERASE)) {
-        printf("PUT_DATA auth fail fid=0x%04x\n", (unsigned)fid);
         return SW_SECURITY_STATUS_NOT_SATISFIED();
     }
     if ((fid == EF_PRIV_DO_1 || fid == EF_PRIV_DO_3) && (!has_pw2 && !has_pw3)) {

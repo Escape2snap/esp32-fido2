@@ -386,7 +386,7 @@ int parse_algoinfo(const file_t *f, int mode) {
         file_t *ef;
         if (!(ef = file_search_by_fid(fid, NULL, SPECIFY_EF)) || !ef->data) {
             const uint8_t *def_algo = algorithm_attr_rsa2k;
-            def_algo = (f->fid == EF_ALGO_DEC) ? algorithm_attr_ed25519 : algorithm_attr_p384r1;
+            def_algo = (f->fid == EF_ALGO_DEC) ? algorithm_attr_cv25519 : algorithm_attr_p384r1;
             datalen += parse_algo(def_algo, f->fid);
         }
         else {

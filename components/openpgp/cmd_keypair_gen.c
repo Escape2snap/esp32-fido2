@@ -58,8 +58,8 @@ int cmd_keypair_gen(void) {
         algo_len = algorithm_attr_p384r1[0];
     }
     else if (fid == EF_PK_DEC) {
-        algo = algorithm_attr_ed25519 + 1;
-        algo_len = algorithm_attr_ed25519[0];
+        algo = algorithm_attr_cv25519 + 1;
+        algo_len = algorithm_attr_cv25519[0];
     }
     if (algo_ef && algo_ef->data) {
         algo = file_get_data(algo_ef);
@@ -117,6 +117,32 @@ int cmd_keypair_gen(void) {
                 return SW_FUNC_NOT_SUPPORTED(); // Ed448 not yet supported
             }
 #endif
+            if (gid == MBEDTLS_ECP_DP_CURVE25519) {
+                printf("KEYPAIR X25519\r\n");
+                mbedtls_ecp_keypair ecdh;
+                mbedtls_ecp_keypair_init(&ecdh);
+                mbedtls_ecp_group_load(&ecdh.grp, gid);
+                uint8_t xkey[32];
+                random_fill_iterator(NULL, xkey, 32);
+                r = mbedtls_mpi_read_binary(&ecdh.d, xkey, 32);
+                mbedtls_platform_zeroize(xkey, sizeof(xkey));
+                if (r != 0) {
+                    mbedtls_ecp_keypair_free(&ecdh);
+                    return SW_EXEC_ERROR();
+                }
+                r = mbedtls_ecp_keypair_calc_public(&ecdh, random_fill_iterator, NULL);
+                if (r != 0) {
+                    mbedtls_ecp_keypair_free(&ecdh);
+                    return SW_EXEC_ERROR();
+                }
+                r = store_keys(&ecdh, algo[0], fid, true);
+                make_ecdsa_response(&ecdh);
+                mbedtls_ecp_keypair_free(&ecdh);
+                if (r != PICOKEYS_OK) {
+                    return SW_EXEC_ERROR();
+                }
+                goto keygen_done;
+            }
             mbedtls_ecp_keypair ecdsa;
             mbedtls_ecp_keypair_init(&ecdsa);
             r = mbedtls_ecdsa_genkey(&ecdsa, gid, random_fill_iterator, NULL);
@@ -161,7 +187,7 @@ keygen_done:
         }
         // Store algorithm attribute for PSO
         const uint8_t *algo_attr = algorithm_attr_p384r1;
-        if (fid == EF_PK_DEC) algo_attr = algorithm_attr_ed25519;
+        if (fid == EF_PK_DEC) algo_attr = algorithm_attr_cv25519;
         if (!file_has_data(algo_ef)) {
             file_put_data(algo_ef, algo_attr, algo_attr[0] + 1);
         }
