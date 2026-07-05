@@ -96,6 +96,8 @@ static void pt_add(fe25519 *X, fe25519 *Y, fe25519 *Z, fe25519 *T) {
 /* ------------------------------------------------------------------ */
 /*  Scalar multiplication: (R) = scalar * base_point                   */
 /*  Left-to-right double-and-add, extended coords, 256 iterations.     */
+/*  Caller must wrap with ED25519_WDT_ADD()/DEL() if this is the      */
+/*  first/last scalarmult in a public API call.                       */
 /* ------------------------------------------------------------------ */
 static void scalarmult_base(fe25519 *X, fe25519 *Y, fe25519 *Z, fe25519 *T,
                             const fe25519 *scalar) {
@@ -163,7 +165,9 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
     expand_seed(seed, &s, NULL);
 
     /* 3. Q = s * B */
+    ED25519_WDT_ADD();
     scalarmult_base(&X, &Y, &Z, &T, &s);
+    ED25519_WDT_DEL();
 
     /* 4. Convert to affine */
     to_affine(&x, &y, &Z, &X, &Y, &Z);
@@ -196,7 +200,9 @@ int ed25519_compute_public(mbedtls_ecp_keypair *key) {
     expand_seed(seed, &s, NULL);
 
     /* Q = s * B */
+    ED25519_WDT_ADD();
     scalarmult_base(&X, &Y, &Z, &T, &s);
+    ED25519_WDT_DEL();
 
     /* Affine */
     to_affine(&x, &y, &Z, &X, &Y, &Z);
@@ -232,7 +238,9 @@ int ed25519_sign(const mbedtls_ecp_keypair *key,
     expand_seed(seed, &s, prefix);
 
     /* Q = scalar * B */
+    ED25519_WDT_ADD();
     scalarmult_base(&Xq, &Yq, &Zq, &Tq, &s);
+    ED25519_WDT_RESET();
     to_affine(&x, &y, &Zq, &Xq, &Yq, &Zq);
     ed25519_encode_point(&x, &y, q_enc);
 
@@ -248,7 +256,9 @@ int ed25519_sign(const mbedtls_ecp_keypair *key,
 
     /* R = r * B */
     fe25519_from_mpi(&s, &mr);  /* reuse s as r (s not needed past here) */
+    ED25519_WDT_RESET();
     scalarmult_base(&Xr, &Yr, &Zr, &Tr, &s);
+    ED25519_WDT_DEL();
     to_affine(&x, &y, &Zr, &Xr, &Yr, &Zr);
     ed25519_encode_point(&x, &y, r_enc);
 
