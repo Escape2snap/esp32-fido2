@@ -392,7 +392,8 @@ int cbor_client_pin(const uint8_t *data, size_t len) {
     else if (subcommand == 0x1) { //getPINRetries
         CBOR_CHECK(cbor_encoder_create_map(&encoder, &mapEncoder, needs_power_cycle ? 2 : 1));
         CBOR_CHECK(cbor_encode_uint(&mapEncoder, 0x03));
-        CBOR_CHECK(cbor_encode_uint(&mapEncoder, (uint64_t) *file_get_data(ef_pin)));
+        uint8_t retries = file_has_data(ef_pin) ? *file_get_data(ef_pin) : MAX_PIN_RETRIES;
+        CBOR_CHECK(cbor_encode_uint(&mapEncoder, (uint64_t) retries));
         if (needs_power_cycle) {
             CBOR_CHECK(cbor_encode_uint(&mapEncoder, 0x04));
             CBOR_CHECK(cbor_encode_boolean(&mapEncoder, true));
