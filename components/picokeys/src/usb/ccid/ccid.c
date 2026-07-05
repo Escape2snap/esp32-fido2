@@ -158,7 +158,7 @@ static int driver_init_ccid(uint8_t itf) {
 
     ccid_response[itf] = (ccid_header_t *) (ccid_tx[itf].buffer + ccid_tx[itf].w_ptr);
 
-    usb_set_timeout_counter(sc_itf_to_usb_itf(itf), 10000);
+    usb_set_timeout_counter(sc_itf_to_usb_itf(itf), 30000);
 
     //ccid_tx[itf].w_ptr = ccid_tx[itf].r_ptr = 0;
 
