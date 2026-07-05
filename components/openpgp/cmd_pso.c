@@ -158,6 +158,9 @@ int cmd_pso(void) {
             inc_sig_count();
         }
         else if (P1(apdu) == 0x80 && P2(apdu) == 0x86) {
+            if (algo[0] == ALGO_EDDSA) {
+                return SW_FUNC_NOT_SUPPORTED();
+            }
             mbedtls_ecdh_context ctx;
             uint8_t kdata[67];
             uint8_t *data = apdu.data, *end = data + apdu.nc;

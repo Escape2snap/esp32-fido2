@@ -750,7 +750,11 @@ int load_private_key_ecdsa(mbedtls_ecp_keypair *ctx, file_t *fkey, bool use_dek)
         }
         mbedtls_mpi_read_binary(&ctx->d, kdata + 1, key_size - 1);
         mbedtls_platform_zeroize(kdata, sizeof(kdata));
-        /* Skip calc_public — ed25519_sign recomputes Q internally */
+        int r3 = ed25519_compute_public(ctx);
+        if (r3 != 0) {
+            mbedtls_ecp_keypair_free(ctx);
+            return PICOKEYS_EXEC_ERROR;
+        }
         return PICOKEYS_OK;
     }
 #endif

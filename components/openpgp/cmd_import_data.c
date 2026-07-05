@@ -22,6 +22,9 @@
 #include "openpgp.h"
 #include "random.h"
 #include "do.h"
+#ifdef MBEDTLS_EDDSA_C
+#include "eddsa_compat.h"
+#endif
 
 static uint16_t tag_len(uint8_t **data) {
     size_t len = *(*data)++;
@@ -164,6 +167,17 @@ int cmd_import_data(void) {
             return SW_FUNC_NOT_SUPPORTED();
         }
         mbedtls_ecp_keypair_init(&ecdsa);
+#ifdef MBEDTLS_EDDSA_C
+        if (gid == MBEDTLS_ECP_DP_ED25519) {
+            r = ed25519_setup_group(&ecdsa.grp);
+            if (r != 0) {
+                mbedtls_ecp_keypair_free(&ecdsa);
+                return SW_EXEC_ERROR();
+            }
+            r = mbedtls_mpi_read_binary(&ecdsa.d, p[1], len[1]);
+            goto after_calc_pub;
+        }
+#endif
         if (gid == MBEDTLS_ECP_DP_CURVE25519) {
             mbedtls_ecp_group_load(&ecdsa.grp, gid);
             r = mbedtls_mpi_read_binary(&ecdsa.d, p[1], len[1]);
@@ -180,6 +194,9 @@ int cmd_import_data(void) {
             mbedtls_ecp_keypair_free(&ecdsa);
             return SW_EXEC_ERROR();
         }
+#ifdef MBEDTLS_EDDSA_C
+after_calc_pub: ;
+#endif
         r = store_keys(&ecdsa, ALGO_ECDSA, fid, true);
         make_ecdsa_response(&ecdsa);
         mbedtls_ecp_keypair_free(&ecdsa);

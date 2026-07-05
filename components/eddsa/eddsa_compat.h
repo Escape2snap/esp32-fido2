@@ -41,6 +41,8 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
 int ed25519_sign(const mbedtls_ecp_keypair *key,
                  const uint8_t *msg, size_t msg_len,
                  uint8_t sig[64]);
+/* Compute public key Q from loaded seed in key->d */
+int ed25519_compute_public(mbedtls_ecp_keypair *key);
 #endif
 
 #endif /* EDDSA_COMPAT_H */

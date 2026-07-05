@@ -357,9 +357,6 @@ int parse_algoinfo(const file_t *f, int mode) {
         datalen += parse_algo(algorithm_attr_bp512r1, EF_ALGO_DEC);
         datalen += parse_algo(algorithm_attr_cv25519, EF_ALGO_DEC);
         datalen += parse_algo(algorithm_attr_x448, EF_ALGO_DEC);
-#ifdef MBEDTLS_EDDSA_C
-        datalen += parse_algo(algorithm_attr_ed25519, EF_ALGO_DEC);
-#endif
 
         datalen += parse_algo(algorithm_attr_rsa1k, EF_ALGO_AUT);
         datalen += parse_algo(algorithm_attr_rsa2k, EF_ALGO_AUT);
