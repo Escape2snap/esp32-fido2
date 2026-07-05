@@ -119,6 +119,27 @@ Each slot has its own algorithm attribute file (EF_ALGO_PRIV1/2/3).
 On first key generation, the algorithm attribute is written automatically.
 If GPG reports `Zero prefix in S-expression`, run `key-attr` first.
 
+### feat/ed25519 Branch (Experimental)
+
+The `feat/ed25519` branch adds Ed25519 (EdDSA) and X25519 (ECDH) support.
+It is WIP — Ed25519 signing works but GPG key generation exceeds PC/SC timeouts.
+
+**Key commits:**
+- `cb475c2` — Fixed Edwards point addition formula (HWCD extended coordinates)
+- `96e748c` — MPI intermediate reduction + WDT feeding in scalar multiplication loop
+- `4f2a30a` — `esp_task_wdt_add()` subscription before long loops
+- `b68bed8` — Flash-backed algorithm attribute files (FID 0x10C1-0x10C3) for PUT DATA
+- `1bfef34` — DEC slot default → Curve25519 ECDH for GPG compatibility
+- `ee2bdcf` — Import path, PSO guard, `ed25519_compute_public()`, MBEDTLS_MPI_CHK fixes
+
+**Remaining issues:**
+- Ed25519 scalar multiplication takes ~8s (generic mbedtls_mpi) → PC/SC timeouts
+- X25519 ECDH keygen (`mbedtls_ecp_keypair_calc_public`) needs verification
+- Full key generation via GPG `generate` not yet functional
+
+**Known fix needed:** Replace double-and-add with dedicated 25519 field
+arithmetic (montgomery reduction, constant-time ladder) for 100x speedup.
+
 ### Important: Algorithm Attribute Storage
 
 After `cmd_keypair_gen.c` generates a key, the algorithm attribute must

@@ -53,6 +53,27 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 | Decryption (DEC) | NIST P-384 (ECDH) |
 | Authentication (AUT) | NIST P-384 (ECDSA) |
 
+### Experimental: Ed25519 / X25519 Support (feat/ed25519 Branch)
+
+The `feat/ed25519` branch adds Ed25519 (EdDSA) and X25519 (Curve25519 ECDH) support:
+
+| Feature | Status | Note |
+|---------|--------|------|
+| Ed25519 key generation | ✅ | Self-contained implementation (no mbedtls fork dependency) |
+| Ed25519 signing | ✅ | Both OpenPGP and FIDO2 paths |
+| X25519 ECDH | 🚧 | Key generation works, PSO:DEC ECDH path incomplete |
+| Key import/export | ✅ | Ed25519 import path added |
+| WDT handling | ✅ | Task + IDLE watchdog fed during long operations |
+| Performance | ⚠️ | ~8s for Ed25519 scalar multiplication on ESP32-S3 (mbedtls_mpi) |
+
+**Status:** On hold — the 8-second keygen time causes PC/SC interface timeouts in GPG.
+A dedicated 25519 field arithmetic implementation would bring this to milliseconds.
+
+```bash
+git checkout feat/ed25519
+idf.py build
+```
+
 ### Hardware
 
 | Spec | Details |
@@ -180,10 +201,18 @@ A 100ms startup delay is built into the firmware to minimize this.
   or Curve 25519 instead.
 - **GPG key-attr:** On first key generation with default P-384, GPG on Windows
   may report `Zero prefix in S-expression`. Run `key-attr` once before
-  `generate` to initialize the algorithm attributes.  
+  `generate` to initialize the algorithm attributes.
 - **CCID+HID coexistence:** Windows `usbccgp.sys` handles CCID and HID
   interfaces better on reboot. If the smartcard reader doesn't appear,
   reconnect the device.
+- **P-384 key generation is slow:** On ESP32-S3, P-384 ECDSA/ECDH key
+  generation using software mbedtls_mpi can take 10+ seconds. The Task
+  WDT will trigger but the operation completes. Stick to P-256 or Ed25519
+  (feat/ed25519) for faster key generation.
+- **Ed25519/Curve25519 (feat/ed25519):** Work in progress. Ed25519 signing
+  works but the 8-second scalar multiplication exceeds PC/SC timeouts
+  in GPG. X25519 ECDH key generation needs completion. See the
+  `feat/ed25519` branch for details.
 
 ---
 
