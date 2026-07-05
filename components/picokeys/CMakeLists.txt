@@ -56,9 +56,15 @@ idf_component_register(
 
 idf_component_set_property(${COMPONENT_NAME} WHOLE_ARCHIVE ON)
 
+# DEBUG_APDU controls hex-dump macros in debug.h.
+# Override to 1 via Kconfig: Component config → Debug Mode → APDU hex trace.
+set(_debug_apdu 0)
+if(CONFIG_DEBUG_APDU_HEX)
+    set(_debug_apdu 1)
+endif()
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     USB_VID=0x2E8A
     USB_PID=0x10FF
     USB_ITF_HID=1
-    DEBUG_APDU=0
+    DEBUG_APDU=${_debug_apdu}
 )

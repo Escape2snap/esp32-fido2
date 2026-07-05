@@ -25,6 +25,27 @@
 #include "button.h"
 
 #include "apdu.h"
+#include "debug_mode.h"
+
+#if CONFIG_DEBUG_STACK
+#include "freertos/task.h"
+static void log_stack_high_water(void) {
+    static uint32_t _ticks = 0;
+    if (++_ticks % (1000 / 10) != 0)  /* ~every 10 s at 10 ms/tick */
+        return;
+    TaskHandle_t tasks[] = { xTaskGetIdleTaskHandleForCPU(0), xTaskGetIdleTaskHandleForCPU(1) };
+    for (int i = 0; i < 2; i++) {
+        if (tasks[i]) {
+            ESP_LOGI("stack", "core%d: %u bytes free",
+                     i, (unsigned)uxTaskGetStackHighWaterMark(tasks[i]));
+        }
+    }
+    ESP_LOGI("stack", "core0_loop: %u bytes free",
+             (unsigned)uxTaskGetStackHighWaterMark(hcore0));
+}
+#else
+#define log_stack_high_water()
+#endif
 
 app_t apps[16];
 uint8_t num_apps = 0;
@@ -112,6 +133,7 @@ static void core0_loop(void *arg) {
         hwrng_task();
         flash_task();
         button_task();
+        log_stack_high_water();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }

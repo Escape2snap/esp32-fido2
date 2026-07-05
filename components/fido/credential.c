@@ -30,6 +30,7 @@
 #include "random.h"
 #include "files.h"
 #include "otp.h"
+#include "debug_mode.h"
 
 int credential_derive_chacha_key(uint8_t *outk, const uint8_t *);
 
@@ -233,6 +234,7 @@ int credential_verify(uint8_t *cred_id, size_t cred_id_len, const uint8_t *rp_id
 }
 
 int credential_create(CborCharString *rpId, CborByteString *userId, CborCharString *userName, CborCharString *userDisplayName, CredOptions *opts, CredExtensions *extensions, bool use_sign_count, int alg, int curve, uint8_t *cred_id, uint16_t *cred_id_len) {
+    PERF_START();
     CborEncoder encoder, mapEncoder, mapEncoder2;
     CborError error = CborNoError;
     uint8_t rp_id_hash[32];
@@ -314,6 +316,7 @@ int credential_create(CborCharString *rpId, CborByteString *userId, CborCharStri
     credential_silent_tag(cred_id, *cred_id_len, rp_id_hash, cred_id + CRED_PROTO_LEN + CRED_IV_LEN + rs + CRED_TAG_LEN);
 
 err:
+    PERF_END("credential_create");
     if (error != CborNoError) {
         if (error == CborErrorImproperValue) {
             return CTAP2_ERR_CBOR_UNEXPECTED_TYPE;
