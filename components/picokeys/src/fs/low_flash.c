@@ -165,6 +165,10 @@ void low_flash_task(void){
 #endif
             if (ready_pages != 0) {
                 printf("ERROR: DO FLASH DOES NOT HAVE ZERO PAGES (had %d before, %d remain)\n", __before, ready_pages);
+                if (ready_pages > TOTAL_FLASH_PAGES) {
+                    printf("  → recovering from underflow, resetting to 0\n");
+                    ready_pages = 0;
+                }
             }
         }
         if (ready_pages == 0) {

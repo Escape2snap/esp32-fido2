@@ -196,12 +196,12 @@ void flash_commit(void) {
 }
 
 
-extern uint8_t ready_pages;
+extern bool flash_available;
 bool flash_commit_sync(uint32_t timeout_ms) {
-    flash_commit();
+    flash_commit();  /* sets flash_available = true */
     uint32_t deadline = board_millis() + timeout_ms;
-    while (ready_pages > 0 && board_millis() < deadline) {
-        low_flash_task();
+    while (flash_available && board_millis() < deadline) {
+        low_flash_task();   /* processes pages, sets flash_available = false when done */
     }
-    return ready_pages == 0;
+    return !flash_available;
 }
