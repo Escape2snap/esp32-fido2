@@ -10,6 +10,12 @@
 #include "mbedtls/bignum.h"
 #include "mbedtls/error.h"
 #include "eddsa_compat.h"
+#ifdef ESP_PLATFORM
+#include "esp_task_wdt.h"
+#define ED25519_WDT_RESET() esp_task_wdt_reset()
+#else
+#define ED25519_WDT_RESET()
+#endif
 
 /* ------------------------------------------------------------------ */
 /* mbedtls_ecp_point_encode — Edwards version (mpi output)            */
@@ -201,10 +207,13 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
     mbedtls_mpi_lset(&Z2, 1); mbedtls_mpi_lset(&T2, 0);
 
     for (int i = 255; i >= 0; i--) {
+        if (i % 8 == 0) ED25519_WDT_RESET();
         if (i % 32 == 0) printf("Ed25519 keygen: %d/256\n", 256-i);
         /* Double current point */
         MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&a, &X2, &X2)); /* A = X^2 */
+        ed25519_mont_reduce(&a, &a);
         MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&b, &Y2, &Y2)); /* B = Y^2 */
+        ed25519_mont_reduce(&b, &b);
         MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&c, &two, &Z2));
         MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&c, &c, &Z2));  /* C = 2*Z^2 */
         ed25519_mont_reduce(&c, &c);
@@ -377,9 +386,12 @@ int ed25519_sign(const mbedtls_ecp_keypair *key,
         mbedtls_mpi_lset(&Xv, 0); mbedtls_mpi_lset(&Yv, 1); \
         mbedtls_mpi_lset(&Zv, 1); mbedtls_mpi_lset(&Tv, 0); \
         for (int _i = 255; _i >= 0; _i--) { \
+            if (_i % 8 == 0) ED25519_WDT_RESET(); \
             /* double */ \
             MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&a, &Xv, &Xv)); \
+            mbedtls_mpi_mod_mpi(&a, &a, &p); \
             MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&b, &Yv, &Yv)); \
+            mbedtls_mpi_mod_mpi(&b, &b, &p); \
             MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&c, &two, &Zv)); \
             MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&c, &c, &Zv)); \
             mbedtls_mpi_mod_mpi(&c, &c, &p); \
