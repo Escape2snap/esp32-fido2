@@ -197,7 +197,11 @@ keygen_done:
         if (!file_has_data(algo_ef)) {
             file_put_data(algo_ef, algo_attr + 1, algo_attr[0]);
         }
-        flash_commit();
+        // Use a short synchronous commit — long enough to drain the
+        // flash queue (~10 ms typical) but short enough to minimise
+        // the window where cache is disabled (avoids Guru Meditation
+        // crashes when a CCID interrupt fires).
+        flash_commit_sync(200);
         return SW_OK();
     }
     else if (P1(apdu) == 0x81) { //read
