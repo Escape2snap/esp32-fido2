@@ -168,9 +168,17 @@ keygen_done:
 #endif
         file_t *pbef = file_search_by_fid(fid + 3, NULL, SPECIFY_EF);
         if (!pbef) {
+            printf("ERR: pbef (fid+3=0x%x) not found!\r\n", fid + 3);
             return SW_REFERENCE_NOT_FOUND();
         }
+        printf("pbef found, storing %d bytes\r\n", res_APDU_size);
         r = file_put_data(pbef, res_APDU, res_APDU_size);
+        if (r != PICOKEYS_OK) {
+            printf("ERR: pbef file_put_data failed: %d\r\n", r);
+            return SW_EXEC_ERROR();
+        }
+        printf("pbef stored, sz=%d, has_data=%d\r\n",
+               file_get_size(pbef), file_has_data(pbef));
         if (r != PICOKEYS_OK) {
             return SW_EXEC_ERROR();
         }
@@ -194,14 +202,17 @@ keygen_done:
         if (!file_has_data(algo_ef)) {
             file_put_data(algo_ef, algo_attr + 1, algo_attr[0]);
         }
-        flash_commit();
+        flash_commit_sync(5000);
+        printf("keygen done, pbef data ok=%d\r\n", file_has_data(pbef));
         return SW_OK();
     }
     else if (P1(apdu) == 0x81) { //read
         file_t *ef = file_search_by_fid(fid + 3, NULL, SPECIFY_EF);
         if (!file_has_data(ef)) {
+            printf("ERR: read key fid=0x%x, ef=%p, has_data=0\r\n", fid + 3, (void*)ef);
             return SW_REFERENCE_NOT_FOUND();
         }
+        printf("read key ok fid=0x%x sz=%d\r\n", fid + 3, file_get_size(ef));
         res_APDU_size = file_get_size(ef);
         memcpy(res_APDU, file_get_data(ef), res_APDU_size);
         return SW_OK();
