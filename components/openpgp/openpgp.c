@@ -856,10 +856,16 @@ void make_ecdsa_response(mbedtls_ecp_keypair *ecdsa) {
     size_t plen = 0;
 #ifdef MBEDTLS_EDDSA_C
     if (ecdsa->grp.id == MBEDTLS_ECP_DP_ED25519) {
-        /* Ed25519: 32-byte little-endian x-coordinate.
-         * GPG prepends 0x40 to form the libgcrypt vk format. */
-        mbedtls_mpi_write_binary_le(&ecdsa->Q.X, pt, 32);
+        /* Ed25519: 32-byte little-endian Y + sign bit of X.
+         * This is the standard RFC 8032 public key encoding.
+         * GPG takes DO 86 content verbatim and prepends 0x40. */
+        mbedtls_mpi q;
+        mbedtls_mpi_init(&q);
+        mbedtls_mpi_copy(&q, &ecdsa->Q.Y);
+        mbedtls_mpi_set_bit(&q, 255, mbedtls_mpi_get_bit(&ecdsa->Q.X, 0));
         plen = 32;
+        mbedtls_mpi_write_binary_le(&q, pt, 32);
+        mbedtls_mpi_free(&q);
 #if defined(CONFIG_DEBUG_ENABLE) && defined(CONFIG_DEBUG_APDU_HEX)
         printf("[dbg] make_ecdsa Ed25519 plen=%d pt=", (int)plen);
         for (int _i = 0; _i < plen; _i++) printf("%02X", pt[_i]);
