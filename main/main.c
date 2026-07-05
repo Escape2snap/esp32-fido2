@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "driver/gpio.h"
 #include "rom/gpio.h"
+#include "esp_task_wdt.h"
 #include "tinyusb.h"
 #include "tusb.h"
 #include "compat/esp_compat.h"
@@ -134,6 +135,14 @@ static void core0_loop(void *arg) {
         flash_task();
         button_task();
         log_stack_high_water();
+#ifdef ESP_PLATFORM
+        /* Feed the Task WDT so long-running Ed25519 operations
+           (or flash commits) don't trigger a watchdog reset.
+           esp_task_wdt_add(NULL) was called by the first
+           ED25519_WDT_ADD() in a scalarmult, but the main loop
+           should also feed during non-scalarmult intervals. */
+        esp_task_wdt_reset();
+#endif
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }

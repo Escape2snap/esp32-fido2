@@ -348,6 +348,11 @@ int derive_key(const uint8_t *app_id, bool new_key, uint8_t *key_handle, int cur
                 return r;
             }
             mbedtls_mpi_read_binary(&key->d, outk, 32);
+            /* Compute public key Q so COSE_key() can encode the credential public key. */
+            if ((r = ed25519_compute_public(key)) != 0) {
+                mbedtls_platform_zeroize(outk, sizeof(outk));
+                return r;
+            }
             mbedtls_platform_zeroize(outk, sizeof(outk));
             return 0;
         }

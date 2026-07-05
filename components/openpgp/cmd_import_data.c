@@ -175,6 +175,9 @@ int cmd_import_data(void) {
                 return SW_EXEC_ERROR();
             }
             r = mbedtls_mpi_read_binary(&ecdsa.d, p[1], len[1]);
+            if (r == 0) {
+                r = ed25519_compute_public(&ecdsa);
+            }
             goto after_calc_pub;
         }
 #endif

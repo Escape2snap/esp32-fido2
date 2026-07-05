@@ -36,10 +36,8 @@
      cache and interrupts internally via the flash guard; no manual
      interrupt masking needed.  (Dual-core systems must let core 1
      run to feed its watchdog.) */
-  #define save_and_disable_interrupts() 1
-  #define restore_interrupts(a) (void)a
-  #define restore_interrupts(a) \
-      XTOS_RESTORE_INTLEVEL(a)
+  #define save_and_disable_interrupts() 0
+  #define restore_interrupts(a) ((void)(a))
   #define flash_range_erase(a,b) esp_partition_erase_range(part0, a, b)
   #define flash_range_program(a,b,c) esp_partition_write(part0, a, b, c);
  #else
