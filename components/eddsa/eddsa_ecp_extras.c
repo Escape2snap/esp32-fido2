@@ -257,6 +257,7 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
 
     /* Convert to affine: x = X/Z, y = Y/Z */
     printf("Ed25519 keygen: loop done\n");
+    ED25519_WDT_RESET();
     MBEDTLS_MPI_CHK(mbedtls_mpi_inv_mod(&d_inv, &Z2, &p));
     MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&key->Q.X, &X2, &d_inv));
     MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&key->Q.Y, &Y2, &d_inv));
@@ -623,6 +624,7 @@ int ed25519_compute_public(mbedtls_ecp_keypair *key) {
     }
 
     /* Convert to affine: x = X/Z, y = Y/Z, store in key->Q */
+    ED25519_WDT_RESET();
     MBEDTLS_MPI_CHK(mbedtls_mpi_inv_mod(&d_inv, &Z2, &p));
     MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&key->Q.X, &X2, &d_inv));
     MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&key->Q.Y, &Y2, &d_inv));
