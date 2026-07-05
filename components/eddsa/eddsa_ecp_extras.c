@@ -13,8 +13,12 @@
 #ifdef ESP_PLATFORM
 #include "esp_task_wdt.h"
 #define ED25519_WDT_RESET() esp_task_wdt_reset()
+#define ED25519_WDT_ADD()   esp_task_wdt_add(NULL)
+#define ED25519_WDT_DEL()   esp_task_wdt_delete(NULL)
 #else
 #define ED25519_WDT_RESET()
+#define ED25519_WDT_ADD()
+#define ED25519_WDT_DEL()
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -206,6 +210,7 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
     mbedtls_mpi_lset(&X2, 0); mbedtls_mpi_lset(&Y2, 1);
     mbedtls_mpi_lset(&Z2, 1); mbedtls_mpi_lset(&T2, 0);
 
+    ED25519_WDT_ADD();
     for (int i = 255; i >= 0; i--) {
         if (i % 8 == 0) ED25519_WDT_RESET();
         if (i % 32 == 0) printf("Ed25519 keygen: %d/256\n", 256-i);
@@ -284,6 +289,7 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
     printf("Ed25519 keygen: success\n");
     ret = 0;
 cleanup:
+    ED25519_WDT_DEL();
     mbedtls_mpi_free(&p); mbedtls_mpi_free(&d_inv);
     mbedtls_mpi_free(&a); mbedtls_mpi_free(&b);
     mbedtls_mpi_free(&c); mbedtls_mpi_free(&d);
@@ -441,6 +447,7 @@ int ed25519_sign(const mbedtls_ecp_keypair *key,
     MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&T1, &X1, &Y1));
     mbedtls_mpi_mod_mpi(&T1, &T1, &p);
 
+    ED25519_WDT_ADD();
     /* Compute Q = scalar * B */
     ED25519_MUL_TO(Xq, Yq, Zq, Tq, &scalar);
 
@@ -513,6 +520,7 @@ int ed25519_sign(const mbedtls_ecp_keypair *key,
 
     ret = 0;
 cleanup:
+    ED25519_WDT_DEL();
     mbedtls_mpi_free(&p); mbedtls_mpi_free(&l); mbedtls_mpi_free(&two);
     mbedtls_mpi_free(&ed_d); mbedtls_mpi_free(&scalar); mbedtls_mpi_free(&prefix);
     mbedtls_mpi_free(&r_nonce); mbedtls_mpi_free(&k_chal);
