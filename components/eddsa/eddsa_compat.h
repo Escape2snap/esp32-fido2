@@ -30,9 +30,10 @@
 #endif
 
 /* Task WDT management for long-running Ed25519 scalar multiplication */
+/* Must yield to prevent IDLE task watchdog from starving */
 #ifdef ESP_PLATFORM
 #include "esp_task_wdt.h"
-#define ED25519_WDT_RESET() esp_task_wdt_reset()
+#define ED25519_WDT_RESET() do { esp_task_wdt_reset(); taskYIELD(); } while(0)
 #define ED25519_WDT_ADD()   esp_task_wdt_add(NULL)
 #define ED25519_WDT_DEL()   esp_task_wdt_delete(NULL)
 #else
