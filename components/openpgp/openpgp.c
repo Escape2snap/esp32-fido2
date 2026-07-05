@@ -861,7 +861,7 @@ void make_ecdsa_response(mbedtls_ecp_keypair *ecdsa) {
         mbedtls_mpi_write_binary_le(&ecdsa->Q.X, pt, 32);
         plen = 32;
 #if defined(CONFIG_DEBUG_ENABLE) && defined(CONFIG_DEBUG_APDU_HEX)
-        printf("[dev] make_ecdsa Ed25519 plen=%d pt=", (int)plen);
+        printf("[dbg] make_ecdsa Ed25519 plen=%d pt=", (int)plen);
         for (int _i = 0; _i < plen; _i++) printf("%02X", pt[_i]);
         printf("\r\n");
 #endif
