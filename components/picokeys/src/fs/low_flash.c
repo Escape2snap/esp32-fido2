@@ -105,6 +105,7 @@ void low_flash_task(void){
     if (mutex_try_enter(&mtx_flash, NULL) == true) {
         if (locked_out == true && flash_available == true && ready_pages > 0) {
             //printf(" DO_FLASH AVAILABLE\n");
+            int __before = ready_pages;
             for (int r = 0; r < TOTAL_FLASH_PAGES; r++) {
                 if (flash_pages[r].ready == true) {
 #if defined(PICO_PLATFORM) || defined(ESP_PLATFORM)
@@ -162,7 +163,7 @@ void low_flash_task(void){
             msync(map, FLASH_SIZE_BYTES, MS_SYNC);
 #endif
             if (ready_pages != 0) {
-                printf("ERROR: DO FLASH DOES NOT HAVE ZERO PAGES\n");
+                printf("ERROR: DO FLASH DOES NOT HAVE ZERO PAGES (had %d before, %d remain)\n", __before, ready_pages);
             }
         }
         if (ready_pages == 0) {
