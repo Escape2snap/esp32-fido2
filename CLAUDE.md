@@ -10,7 +10,8 @@ source /path/to/esp-idf-v5.4.4/export.sh
 
 # Full build flow (first time)
 rm -rf build sdkconfig
-idf.py set-target esp32s3
+git clone https://github.com/intel/tinycbor.git third-party/tinycbor  # see "Dependency Notes → tinycbor"
+idf.py set-target esp32s3    # ⚠️ MUST set target before first build (tinyusb only supports esp32s2/s3)
 idf.py build
 idf.py -p /dev/ttyACM0 erase-flash
 idf.py -p /dev/ttyACM0 flash
@@ -19,12 +20,14 @@ idf.py -p /dev/ttyACM0 flash
 idf.py build
 idf.py -p /dev/ttyACM0 flash
 
-# Monitor
-idf.py -p /dev/ttyACM0 monitor    # exit: Ctrl+]
-
-# Clean rebuild
+# Clean rebuild (keeps sdkconfig — target stays esp32s3)
 idf.py fullclean && idf.py build
 ```
+
+> **Important:** `idf.py set-target esp32s3` is required before the **first** build.
+> The `espressif/tinyusb` component only supports `esp32s2`, `esp32s3` and newer
+> targets — the default `esp32` target will cause version-solving failures.
+> Removing `build/` or `.sdkconfig` also requires re-running `set-target`.
 
 ### Permissions
 
@@ -83,6 +86,46 @@ main/main.c
 - `usb_task()` in `components/picokeys/src/usb/usb.c` guards `hid_task()` with `ITF_HID_TOTAL > 0` check.
 
 ---
+
+## Dependency Notes
+
+### esp_tinyusb / tinyusb Version Constraint
+
+`main/idf_component.yml` constrains `espressif/esp_tinyusb` to `>=1.4,<2.0`:
+
+```yaml
+dependencies:
+  espressif/esp_tinyusb: ">=1.4,<2.0"
+```
+
+- **Do NOT add `espressif/tinyusb` as an explicit dependency** — it is pulled in
+  transitively by `esp_tinyusb`. Its version string format (e.g. `0.19.0~3`)
+  uses `~` which is not valid PEP 440 and causes the component manager solver
+  to fail.
+- **Do NOT upgrade to `esp_tinyusb >=2.0`** — the v2.x API for `tinyusb_config_t`
+  is incompatible with the existing USB code in `components/picokeys/src/usb/`.
+
+### tinycbor
+
+The `third-party/tinycbor/` directory is a clone of
+[Intel/tinycbor](https://github.com/intel/tinycbor). It is listed in
+`.gitignore` so must be cloned manually:
+
+```bash
+git clone https://github.com/intel/tinycbor.git third-party/tinycbor
+# Generate CMake output headers (normally produced by CMake configure):
+cp third-party/tinycbor/src/tinycbor-export.h.in third-party/tinycbor/src/tinycbor-export.h
+```
+
+Then create `third-party/tinycbor/src/tinycbor-version.h` with:
+```c
+#define TINYCBOR_VERSION_MAJOR 7
+#define TINYCBOR_VERSION_MINOR 0
+#define TINYCBOR_VERSION_PATCH 0
+```
+
+The tinycbor repo's own `CMakeLists.txt` must remain in place — it is
+discovered by the ESP-IDF build system as an external dependency.
 
 ## Known Issues
 
