@@ -666,8 +666,8 @@ int store_keys(void *key_ctx, int type, uint16_t key_id, bool use_kek) {
             olen = 32;
         }
         else if (ecdsa->grp.id == MBEDTLS_ECP_DP_CURVE25519) {
-            /* Store 32-byte raw scalar for X25519 */
-            mbedtls_mpi_write_binary(&ecdsa->d, kdata + 1, 32);
+            /* Store 32-byte raw scalar for X25519, little-endian (RFC 7748) */
+            mbedtls_mpi_write_binary_le(&ecdsa->d, kdata + 1, 32);
             olen = 32;
         }
         else
@@ -764,7 +764,7 @@ int load_private_key_ecdsa(mbedtls_ecp_keypair *ctx, file_t *fkey, bool use_dek)
     }
     if (gid == MBEDTLS_ECP_DP_CURVE25519) {
         mbedtls_ecp_group_load(&ctx->grp, gid);
-        mbedtls_mpi_read_binary(&ctx->d, kdata + 1, key_size - 1);
+        mbedtls_mpi_read_binary_le(&ctx->d, kdata + 1, key_size - 1);
         mbedtls_platform_zeroize(kdata, sizeof(kdata));
         int r4 = mbedtls_ecp_keypair_calc_public(ctx, NULL, NULL);
         if (r4 != 0) {

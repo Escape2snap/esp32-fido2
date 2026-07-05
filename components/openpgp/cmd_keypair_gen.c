@@ -62,8 +62,9 @@ int cmd_keypair_gen(void) {
         algo_len = algorithm_attr_cv25519[0];
     }
     if (algo_ef && algo_ef->data) {
-        algo = file_get_data(algo_ef);
-        algo_len = file_get_size(algo_ef);
+        const uint8_t *fd = file_get_data(algo_ef);
+        algo = fd + 1;      // skip length byte (same layout as algorithm_attr_*)
+        algo_len = fd[0];   // length from stored header
     }
     if (P1(apdu) == 0x80) { //generate
         if (algo[0] == ALGO_RSA) {
@@ -124,7 +125,8 @@ int cmd_keypair_gen(void) {
                 mbedtls_ecp_group_load(&ecdh.grp, gid);
                 uint8_t xkey[32];
                 random_fill_iterator(NULL, xkey, 32);
-                r = mbedtls_mpi_read_binary(&ecdh.d, xkey, 32);
+                xkey[0] &= 248; xkey[31] &= 127; xkey[31] |= 64; /* RFC 7748 clamping */
+                r = mbedtls_mpi_read_binary_le(&ecdh.d, xkey, 32);
                 mbedtls_platform_zeroize(xkey, sizeof(xkey));
                 if (r != 0) {
                     mbedtls_ecp_keypair_free(&ecdh);

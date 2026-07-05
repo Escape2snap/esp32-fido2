@@ -31,7 +31,8 @@ int cmd_internal_aut(void) {
     }
     const uint8_t *algo = algorithm_attr_rsa2k + 1;
     if (algo_ef && algo_ef->data) {
-        algo = file_get_data(algo_ef);
+        const uint8_t *fd = file_get_data(algo_ef);
+        algo = fd + 1;
     }
     file_t *ef = file_search_by_fid(pk_aut, NULL, SPECIFY_EF);
     if (!ef) {
