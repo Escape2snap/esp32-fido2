@@ -161,6 +161,12 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
     /* 1. Generate random seed */
     f_rng(p_rng, seed, 32);
 
+#if defined(CONFIG_DEBUG_ENABLE) && defined(CONFIG_DEBUG_APDU_HEX)
+    printf("[dev] Ed25519 seed: ");
+    for (int _i = 0; _i < 32; _i++) printf("%02X", seed[_i]);
+    printf("\r\n");
+#endif
+
     /* 2. Expand to clamped scalar */
     expand_seed(seed, &s, NULL);
 
@@ -174,6 +180,20 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
     fe25519_to_mpi(&key->Q.X, &x);
     fe25519_to_mpi(&key->Q.Y, &y);
     mbedtls_mpi_lset(&key->Q.Z, 1);
+
+#if defined(CONFIG_DEBUG_ENABLE) && defined(CONFIG_DEBUG_APDU_HEX)
+    {
+        unsigned char _buf[32];
+        mbedtls_mpi_write_binary_le(&key->Q.X, _buf, 32);
+        printf("[dev] Ed25519 Q.x (LE): ");
+        for (int _i = 0; _i < 32; _i++) printf("%02X", _buf[_i]);
+        printf("\r\n");
+        mbedtls_mpi_write_binary_le(&key->Q.Y, _buf, 32);
+        printf("[dev] Ed25519 Q.y (LE): ");
+        for (int _i = 0; _i < 32; _i++) printf("%02X", _buf[_i]);
+        printf("\r\n");
+    }
+#endif
 
     /* 5. Set group parameters */
     ed25519_setup_group(&key->grp);
@@ -283,6 +303,15 @@ int ed25519_sign(const mbedtls_ecp_keypair *key,
     MBEDTLS_MPI_CHK(mbedtls_mpi_mod_mpi(&mr, &mr, &order_l));
     MBEDTLS_MPI_CHK(mbedtls_mpi_write_binary_le(&mr, sig + 32, 32));
     memcpy(sig, r_enc, 32);
+
+#if defined(CONFIG_DEBUG_ENABLE) && defined(CONFIG_DEBUG_APDU_HEX)
+    printf("[dev] Ed25519 sig R: ");
+    for (int _i = 0; _i < 64; _i++) printf("%02X", sig[_i]);
+    printf("\r\n");
+    printf("[dev] Ed25519 msg_len=%zu msg=", msg_len);
+    for (size_t _i = 0; _i < msg_len && _i < 64; _i++) printf("%02X", msg[_i]);
+    printf("\r\n");
+#endif
 
     ret = 0;
 cleanup:

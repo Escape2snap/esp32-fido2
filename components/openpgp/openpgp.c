@@ -860,6 +860,11 @@ void make_ecdsa_response(mbedtls_ecp_keypair *ecdsa) {
          * GPG prepends 0x40 to form the libgcrypt vk format. */
         mbedtls_mpi_write_binary_le(&ecdsa->Q.X, pt, 32);
         plen = 32;
+#if defined(CONFIG_DEBUG_ENABLE) && defined(CONFIG_DEBUG_APDU_HEX)
+        printf("[dev] make_ecdsa Ed25519 plen=%d pt=", (int)plen);
+        for (int _i = 0; _i < plen; _i++) printf("%02X", pt[_i]);
+        printf("\r\n");
+#endif
     }
     else if (ecdsa->grp.id == MBEDTLS_ECP_DP_CURVE25519) {
         /* X25519: 32-byte little-endian u-coordinate */
