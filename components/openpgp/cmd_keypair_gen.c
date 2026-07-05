@@ -62,9 +62,8 @@ int cmd_keypair_gen(void) {
         algo_len = algorithm_attr_cv25519[0];
     }
     if (algo_ef && algo_ef->data) {
-        const uint8_t *fd = file_get_data(algo_ef);
-        algo = fd + 1;      // skip length byte (same layout as algorithm_attr_*)
-        algo_len = fd[0];   // length from stored header
+        algo = file_get_data(algo_ef);
+        algo_len = file_get_size(algo_ef);
     }
     if (P1(apdu) == 0x80) { //generate
         if (algo[0] == ALGO_RSA) {
@@ -193,7 +192,7 @@ keygen_done:
         const uint8_t *algo_attr = algorithm_attr_p384r1;
         if (fid == EF_PK_DEC) algo_attr = algorithm_attr_cv25519;
         if (!file_has_data(algo_ef)) {
-            file_put_data(algo_ef, algo_attr, algo_attr[0] + 1);
+            file_put_data(algo_ef, algo_attr + 1, algo_attr[0]);
         }
         flash_commit();
         return SW_OK();

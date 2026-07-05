@@ -54,8 +54,7 @@ int cmd_pso(void) {
     }
     const uint8_t *algo = algorithm_attr_rsa2k + 1;
     if (algo_ef && algo_ef->data) {
-        const uint8_t *fd = file_get_data(algo_ef);
-        algo = fd + 1;
+        algo = file_get_data(algo_ef);
     }
     if (apdu.nc > 0 && apdu.data[0] == 0x2) { //AES PSO?
         if (((apdu.nc - 1) % 16 == 0 && P1(apdu) == 0x80 && P2(apdu) == 0x86) ||
