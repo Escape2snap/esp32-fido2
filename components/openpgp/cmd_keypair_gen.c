@@ -133,7 +133,7 @@ int cmd_keypair_gen(void) {
         const uint8_t *algo_attr = algorithm_attr_p384r1;
         if (fid == EF_PK_DEC) algo_attr = algorithm_attr_p384r1_ecdh;
         if (!file_has_data(algo_ef)) {
-            file_put_data(algo_ef, algo_attr, algo_attr[0] + 1);
+            file_put_data(algo_ef, algo_attr + 1, algo_attr[0]);
         }
         flash_commit();
         return SW_OK();
