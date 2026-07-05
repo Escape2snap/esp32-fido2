@@ -95,7 +95,7 @@ int cbor_large_blobs(const uint8_t *data, size_t len) {
         CBOR_CHECK(cbor_encoder_create_map(&encoder, &mapEncoder, 1));
         CBOR_CHECK(cbor_encode_uint(&mapEncoder, 0x01));
         size_t fragment_len = MIN(get, file_get_size(ef_largeblob) - offset);
-        CBOR_CHECK(cbor_encode_byte_string(&mapEncoder, fragment_len > 0 ? file_get_data(ef_largeblob) + offset : NULL, fragment_len));
+        CBOR_CHECK(cbor_encode_byte_string(&mapEncoder, fragment_len > 0 ? file_get_data(ef_largeblob) + offset : (const uint8_t *)"", fragment_len));
     }
     else {
         if (set.len > MAX_FRAGMENT_LENGTH) {

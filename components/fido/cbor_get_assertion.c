@@ -464,7 +464,7 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
         }
 
         if (extensions.largeBlobKey == pfalse) {
-            CBOR_ERROR(CTAP2_ERR_INVALID_OPTION);
+            extensions.largeBlobKey = NULL; // treat as not requested, no error
         }
 
         if (silent && !resident) {
@@ -538,7 +538,8 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
                                                     selcred->extensions.credBlob.len));
                 }
                 else {
-                    CBOR_CHECK(cbor_encode_byte_string(&mapEncoder, NULL, 0));
+                    uint8_t empty_blob = 0;
+                    CBOR_CHECK(cbor_encode_byte_string(&mapEncoder, &empty_blob, 0));
                 }
             }
             if (extensions.hmac_secret == ptrue) {
@@ -631,7 +632,8 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
     if (selcred) {
         ret = fido_load_key((int)selcred->curve, selcred->id.data, &ekey);
         if (ret != 0) {
-            if (derive_key(rp_id_hash, false, selcred->id.data, MBEDTLS_ECP_DP_SECP256R1, &ekey) != 0) {
+            mbedtls_ecp_group_id mgroup = fido_curve_to_mbedtls((int)selcred->curve);
+            if (mgroup == MBEDTLS_ECP_DP_NONE || derive_key(rp_id_hash, false, selcred->id.data, mgroup, &ekey) != 0) {
                 mbedtls_ecp_keypair_free(&ekey);
                 CBOR_ERROR(CTAP1_ERR_OTHER);
             }
