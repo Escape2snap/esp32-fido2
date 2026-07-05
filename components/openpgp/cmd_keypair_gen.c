@@ -198,6 +198,12 @@ keygen_done:
             file_put_data(algo_ef, algo_attr + 1, algo_attr[0]);
         }
         flash_commit();
+        /* Yield a few times so the main loop (core0_loop) can process
+           pending flash pages via flash_task()/low_flash_task().
+           This avoids both the Guru Meditation crash (flash ops happen
+           naturally, with interrupts enabled) and the 6A 88 error
+           (PB file data is committed before GPG reads it back). */
+        for (int _i = 0; _i < 3; _i++) vTaskDelay(1);
         return SW_OK();
     }
     else if (P1(apdu) == 0x81) { //read
