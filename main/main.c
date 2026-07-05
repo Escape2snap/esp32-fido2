@@ -108,6 +108,9 @@ void execute_tasks(void) {
 
 static void core0_loop(void *arg) {
     (void)arg;
+#ifdef ESP_PLATFORM
+    esp_task_wdt_add(NULL);  /* subscribe to Task WDT before feeding loop */
+#endif
     while (1) {
         execute_tasks();
         hwrng_task();
