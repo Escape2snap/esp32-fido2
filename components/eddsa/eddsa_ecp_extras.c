@@ -227,12 +227,12 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
         if (mbedtls_mpi_get_bit(&scalar, i)) {
             /* Add base point: R = R + B */
             /* Using extended coordinates addition: */
-            MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&a, &Y2, &X2)); /* A = Y1 - X1 */
-            MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&b, &Y1, &X1)); /* B = Y2 + X2 */
-            MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&tx, &a, &b));
-            MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&a, &Y2, &X2)); /* A = Y1 + X1 */
-            MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&b, &Y1, &X1)); /* B = Y2 - X2 */
-            MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&ty, &a, &b));
+            MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&a, &Y1, &X1)); /* A = Y1 - X1 */
+            MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&b, &Y2, &X2)); /* B = Y2 - X2 */
+            MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&tx, &a, &b));  /* tx = (Y1-X1)*(Y2-X2) */
+            MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&a, &Y1, &X1)); /* A = Y1 + X1 */
+            MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&b, &Y2, &X2)); /* B = Y2 + X2 */
+            MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&ty, &a, &b));  /* ty = (Y1+X1)*(Y2+X2) */
             MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&a, &T2, &ed_d)); /* C = T1 * 2*d * T2 */
             MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&a, &a, &two));
             MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&b, &a, &T1));
@@ -398,12 +398,12 @@ int ed25519_sign(const mbedtls_ecp_keypair *key,
             mbedtls_mpi_mod_mpi(&Tv, &Tv, &p); mbedtls_mpi_mod_mpi(&Zv, &Zv, &p); \
             if (mbedtls_mpi_get_bit(scalar_val, _i)) { \
                 /* add base point */ \
-                MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&a, &Yv, &Xv)); \
-                MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&b, &Y1, &X1)); \
-                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&tx, &a, &b)); \
-                MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&a, &Yv, &Xv)); \
-                MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&b, &Y1, &X1)); \
-                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&ty, &a, &b)); \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&a, &Y1, &X1)); /* A = Y1 - X1 */ \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&b, &Yv, &Xv)); /* B = Yv - Xv */ \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&tx, &a, &b));  /* tx = (Y1-X1)*(Yv-Xv) */ \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&a, &Y1, &X1)); /* A = Y1 + X1 */ \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&b, &Yv, &Xv)); /* B = Yv + Xv */ \
+                MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&ty, &a, &b));  /* ty = (Y1+X1)*(Yv+Xv) */ \
                 MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&a, &Tv, &ed_d)); \
                 MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&a, &a, &two)); \
                 MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&b, &a, &T1)); \
