@@ -32,10 +32,10 @@
   #include "compat/esp_compat.h"
   #include "esp_partition.h"
   const esp_partition_t *part0;
-  #define save_and_disable_interrupts() 1
+  #define save_and_disable_interrupts() 0
   #define flash_range_erase(a,b) esp_partition_erase_range(part0, a, b)
   #define flash_range_program(a,b,c) esp_partition_write(part0, a, b, c);
-  #define restore_interrupts(a) (void)a
+  #define restore_interrupts(a) ((void)(a))
  #else
   #ifdef _MSC_VER
    #include <windows.h>
