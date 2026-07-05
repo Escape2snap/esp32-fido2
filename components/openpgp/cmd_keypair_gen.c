@@ -58,8 +58,8 @@ int cmd_keypair_gen(void) {
         algo_len = algorithm_attr_p384r1[0];
     }
     else if (fid == EF_PK_DEC) {
-        algo = algorithm_attr_p384r1_ecdh + 1;
-        algo_len = algorithm_attr_p384r1_ecdh[0];
+        algo = algorithm_attr_ed25519 + 1;
+        algo_len = algorithm_attr_ed25519[0];
     }
     if (algo_ef && algo_ef->data) {
         algo = file_get_data(algo_ef);
@@ -161,7 +161,7 @@ keygen_done:
         }
         // Store algorithm attribute for PSO
         const uint8_t *algo_attr = algorithm_attr_p384r1;
-        if (fid == EF_PK_DEC) algo_attr = algorithm_attr_p384r1_ecdh;
+        if (fid == EF_PK_DEC) algo_attr = algorithm_attr_ed25519;
         if (!file_has_data(algo_ef)) {
             file_put_data(algo_ef, algo_attr, algo_attr[0] + 1);
         }
