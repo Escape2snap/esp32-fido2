@@ -167,7 +167,7 @@ void low_flash_task(void){
                     memset(map + flash_pages[r].address, 0, FLASH_SECTOR_SIZE);
 #endif
                     flash_pages[r].erase = false;
-                    ready_pages--;
+                    if (ready_pages > 0) ready_pages--; else printf("ERROR: ready_pages underflow at erase page %d\n", r);
                 }
             }
 #if !defined(PICO_PLATFORM) && !defined(ESP_PLATFORM)
