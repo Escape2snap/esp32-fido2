@@ -127,6 +127,22 @@ Then create `third-party/tinycbor/src/tinycbor-version.h` with:
 The tinycbor repo's own `CMakeLists.txt` must remain in place — it is
 discovered by the ESP-IDF build system as an external dependency.
 
+### mbedtls-fork (feat/ed25519 only)
+
+The `feat/ed25519` branch needs an mbedtls fork with EdDSA support
+(`polhenarejos/mbedtls`, `mbedtls-3.6-eddsa` branch). `third-party/` is
+gitignored, so clone manually:
+
+```bash
+git clone --branch mbedtls-3.6-eddsa \
+    https://github.com/polhenarejos/mbedtls.git \
+    third-party/mbedtls-fork
+cd third-party/mbedtls-fork
+git submodule update --init --depth 1
+```
+
+Referenced by `components/eddsa/CMakeLists.txt` for `eddsa.c` and headers.
+
 ## Known Issues
 
 ### Windows CCID+HID Coexistence
