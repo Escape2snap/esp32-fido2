@@ -108,24 +108,37 @@ void low_flash_task(void){
             int __before = ready_pages;
             for (int r = 0; r < TOTAL_FLASH_PAGES; r++) {
                 if (flash_pages[r].ready == true) {
-#if defined(PICO_PLATFORM) || defined(ESP_PLATFORM)
+#if defined(PICO_PLATFORM)
+                    mutex_exit(&mtx_flash);
                     //printf("WRITTING %X\n",flash_pages[r].address-XIP_BASE);
-                    /* Suspend core 1 BEFORE releasing the mutex, so core 1
-                       cannot call flash_program_block and add a .ready page
-                       without a matching ready_pages increment during the
-                       mutex-exit gap.  If core 1 adds a page while we are
-                       processing it, ready_pages underflows. */
                     if (multicore_lockout_start_timeout_us(1000) == false) {
                         printf("WARN: FLASH LOCKOUT START TIMEOUT\n");
+                        mutex_enter_blocking(&mtx_flash);
                         continue;
                     }
-                    mutex_exit(&mtx_flash);
                     //printf("WRITTING %X\n",flash_pages[r].address-XIP_BASE);
                     uint32_t ints = save_and_disable_interrupts();
                     flash_range_erase(flash_pages[r].address - XIP_BASE, FLASH_SECTOR_SIZE);
                     flash_range_program(flash_pages[r].address - XIP_BASE, flash_pages[r].page, FLASH_SECTOR_SIZE);
                     restore_interrupts(ints);
+                    if (multicore_lockout_end_timeout_us(1000) == false) {
+                        printf("WARN: FLASH LOCKOUT END TIMEOUT\n");
+                        mutex_enter_blocking(&mtx_flash);
+                        continue;
+                    }
                     mutex_enter_blocking(&mtx_flash);
+                    //printf("WRITEN %X !\n",flash_pages[r].address);
+#elif defined(ESP_PLATFORM)
+                    //printf("WRITTING %X\n",flash_pages[r].address-XIP_BASE);
+                    /* Keep mutex held during flash ops — save_and_disable_ints
+                       is a no-op on ESP32, so the FreeRTOS tick can preempt
+                       us mid-erase and another task could modify this page. */
+                    if (multicore_lockout_start_timeout_us(1000) == false) {
+                        printf("WARN: FLASH LOCKOUT START TIMEOUT\n");
+                        continue;
+                    }
+                    flash_range_erase(flash_pages[r].address - XIP_BASE, FLASH_SECTOR_SIZE);
+                    flash_range_program(flash_pages[r].address - XIP_BASE, flash_pages[r].page, FLASH_SECTOR_SIZE);
                     if (multicore_lockout_end_timeout_us(1000) == false) {
                         printf("WARN: FLASH LOCKOUT END TIMEOUT\n");
                         continue;
@@ -149,17 +162,30 @@ void low_flash_task(void){
                     }
                 }
                 else if (flash_pages[r].erase == true) {
-#if defined(PICO_PLATFORM) || defined(ESP_PLATFORM)
+#if defined(PICO_PLATFORM)
+                    mutex_exit(&mtx_flash);
+                    //printf("WRITTING\n");
+                    if (multicore_lockout_start_timeout_us(1000) == false) {
+                        printf("WARN: FLASH LOCKOUT START TIMEOUT\n");
+                        mutex_enter_blocking(&mtx_flash);
+                        continue;
+                    }
+                    uint32_t ints = save_and_disable_interrupts();
+                    flash_range_erase(flash_pages[r].address - XIP_BASE, flash_pages[r].page_size ? ((int) (flash_pages[r].page_size / FLASH_SECTOR_SIZE)) * FLASH_SECTOR_SIZE : FLASH_SECTOR_SIZE);
+                    restore_interrupts(ints);
+                    if (multicore_lockout_end_timeout_us(1000) == false) {
+                        printf("WARN: FLASH LOCKOUT END TIMEOUT\n");
+                        mutex_enter_blocking(&mtx_flash);
+                        continue;
+                    }
+                    mutex_enter_blocking(&mtx_flash);
+#elif defined(ESP_PLATFORM)
                     //printf("WRITTING\n");
                     if (multicore_lockout_start_timeout_us(1000) == false) {
                         printf("WARN: FLASH LOCKOUT START TIMEOUT\n");
                         continue;
                     }
-                    mutex_exit(&mtx_flash);
-                    uint32_t ints = save_and_disable_interrupts();
                     flash_range_erase(flash_pages[r].address - XIP_BASE, flash_pages[r].page_size ? ((int) (flash_pages[r].page_size / FLASH_SECTOR_SIZE)) * FLASH_SECTOR_SIZE : FLASH_SECTOR_SIZE);
-                    restore_interrupts(ints);
-                    mutex_enter_blocking(&mtx_flash);
                     if (multicore_lockout_end_timeout_us(1000) == false) {
                         printf("WARN: FLASH LOCKOUT END TIMEOUT\n");
                         continue;
