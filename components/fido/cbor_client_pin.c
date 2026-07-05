@@ -43,13 +43,19 @@ static bool hkey_init = false;
 
 static bool persist_pin_retry_counter(file_t *ef, const uint8_t *pin_data, uint16_t pin_data_len) {
     if (file_put_data(ef, pin_data, pin_data_len) != PICOKEYS_OK) {
+        printf("DEBUG: persist_pin_retry_counter: file_put_data failed\n");
         return false;
     }
     // Do not trust the decremented RAM copy until core0 has drained the flash queue.
-    if (!flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS) || file_get_size(ef) != pin_data_len || !file_get_data(ef)) {
+    bool sync_ok = flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS);
+    if (!sync_ok || file_get_size(ef) != pin_data_len || !file_get_data(ef)) {
+        printf("DEBUG: persist_pin_retry_counter fail: sync=%d sz_match=%d data=%p\n",
+               sync_ok, file_get_size(ef) == pin_data_len, file_get_data(ef));
         return false;
     }
-    return file_get_data(ef)[0] == pin_data[0];
+    bool ret = file_get_data(ef)[0] == pin_data[0];
+    if (!ret) printf("DEBUG: persist_pin_retry_counter: data mismatch\n");
+    return ret;
 }
 
 static int beginUsingPinUvAuthToken(bool userIsPresent) {
