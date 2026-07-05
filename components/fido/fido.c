@@ -489,17 +489,20 @@ int scan_files_fido(void) {
         file_put_data(ef_dev_state, random_bytes_get(32), 32);
     }
 
-    flash_commit();
+    flash_commit_sync(5000);
     return PICOKEYS_OK;
 }
 
 void scan_all(void) {
     file_scan_flash();
-    scan_files_fido();
+    int ret = scan_files_fido();
+    if (ret != 0) {
+        printf("FATAL ERROR: scan_files_fido failed with %d\r\n", ret);
+    }
 }
 
 extern bool needs_power_cycle;
-static bool fido_initialized = false;
+bool fido_initialized = false;
 void init_fido(void) {
     if (!fido_initialized) {
         fido_initialized = true;

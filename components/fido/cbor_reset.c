@@ -41,6 +41,7 @@ int cbor_reset(void) {
     }
 #endif
     file_initialize_flash(true);
+    fido_initialized = false;
     init_fido();
 #ifdef DEFAULT_MCUV_NOT_REQUIRED
     set_opts(get_opts() | FIDO2_OPT_MCUV_NOTRQD);

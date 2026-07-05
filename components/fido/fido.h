@@ -41,6 +41,7 @@ extern int wait_button_pressed(void);
 extern void init_fido(void);
 extern void init_otp(void);
 extern void scan_all(void);
+extern bool fido_initialized;
 extern mbedtls_ecp_group_id fido_curve_to_mbedtls(int curve);
 extern int mbedtls_curve_to_fido(mbedtls_ecp_group_id id);
 extern int fido_load_key(int curve, const uint8_t *cred_id, mbedtls_ecp_keypair *key);
