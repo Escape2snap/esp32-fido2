@@ -129,6 +129,13 @@ void execute_tasks(void) {
 
 static void core0_loop(void *arg) {
     (void)arg;
+#ifdef ESP_PLATFORM
+    /* Subscribe to the Task WDT so the periodic esp_task_wdt_reset()
+       calls below are effective.  Without this the task is not in the
+       WDT list and every call prints:
+         task_wdt: esp_task_wdt_reset(...): task not found */
+    esp_task_wdt_add(NULL);
+#endif
     while (1) {
         execute_tasks();
         hwrng_task();
@@ -136,11 +143,8 @@ static void core0_loop(void *arg) {
         button_task();
         log_stack_high_water();
 #ifdef ESP_PLATFORM
-        /* Feed the Task WDT so long-running Ed25519 operations
-           (or flash commits) don't trigger a watchdog reset.
-           esp_task_wdt_add(NULL) was called by the first
-           ED25519_WDT_ADD() in a scalarmult, but the main loop
-           should also feed during non-scalarmult intervals. */
+        /* Feed WDT — flash commits and long-running Ed25519 operations
+           on core 1 must not starve core 0's watchdog. */
         esp_task_wdt_reset();
 #endif
         vTaskDelay(pdMS_TO_TICKS(10));
