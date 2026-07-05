@@ -132,6 +132,7 @@ void low_flash_task(void){
                     memcpy(map + flash_pages[r].address, flash_pages[r].page, FLASH_SECTOR_SIZE);
 #endif
                     flash_pages[r].ready = false;
+                    flash_pages[r].erase = false;  /* also consumed if set by flash_erase_page */
                     ready_pages--;
                 }
                 else if (flash_pages[r].erase == true) {
