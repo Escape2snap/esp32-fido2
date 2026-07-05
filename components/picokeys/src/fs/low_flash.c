@@ -32,10 +32,20 @@
   #include "compat/esp_compat.h"
   #include "esp_partition.h"
   const esp_partition_t *part0;
-  #define save_and_disable_interrupts() 1
+  /* Disable/enable all interrupts while flash is being erased/written.
+     Without this guard, a USB ISR may fire during the cache-disabled
+     window and trigger a Guru Meditation crash.
+     XTOS_SET_INTLEVEL/XTOS_RESTORE_INTLEVEL are the standard Xtensa
+     macros available through the FreeRTOS Xtensa portmacro.h. */
+  #include "xtensa/config/core.h"
+  /* PORTABLE_LEVEL is the interrupt level the FreeRTOS kernel uses
+     (typically XCHAL_EXCM_LEVEL) — disabling it masks all ISRs. */
+  #define save_and_disable_interrupts() \
+      ({ uint32_t __l = XTOS_SET_INTLEVEL(XCHAL_EXCM_LEVEL); __l; })
+  #define restore_interrupts(a) \
+      XTOS_RESTORE_INTLEVEL(a)
   #define flash_range_erase(a,b) esp_partition_erase_range(part0, a, b)
   #define flash_range_program(a,b,c) esp_partition_write(part0, a, b, c);
-  #define restore_interrupts(a) (void)a
  #else
   #ifdef _MSC_VER
    #include <windows.h>
