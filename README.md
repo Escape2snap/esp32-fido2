@@ -196,6 +196,23 @@ for dev in CtapHidDevice.list_devices():
 "
 ```
 
+### Verifying Ed25519 Public Key Format (opensc-tool)
+
+The Ed25519 public key is exchanged as a raw 32-byte little-endian encoding
+(Y-coordinate with sign bit of X at bit 255, per RFC 8032).  This can be
+verified with `opensc-tool`:
+
+```cmd
+opensc-tool -r 0 -s 00:47:81:00:02:B6:00:00
+
+Received (SW1=0x90, SW2=0x00):
+7F 49 22 86 20 <32-byte raw public key>    ← DO 86 with 32 bytes, no prefix
+```
+
+The `86 20` tag confirms a 32-byte naked public key — no leading `00` or `04`
+prefix that would indicate a different encoding.  This matches the OpenPGP card
+v3.4 specification for EdDSA.
+
 ### Verifying Ed25519 Keys (Debug Mode)
 
 When CONFIG_DEBUG_APDU_HEX is enabled, the firmware prints the raw key
