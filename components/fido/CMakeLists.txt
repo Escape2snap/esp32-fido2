@@ -31,9 +31,11 @@ idf_component_register(
         tinycbor
 )
 
-# EdDSA defines come from the fork's mbedtls_config.h — no need to repeat here.
-# The undef below prevents the Ed448+SHA3 prerequisite check from breaking
-# the build (see components/eddsa/CMakeLists.txt for details).
+# The fork's mbedtls_config.h defines MBEDTLS_EDDSA_C /
+# MBEDTLS_ECP_DP_ED25519_ENABLED — visible because PRIV_INCLUDE_DIRS
+# points at the fork's headers ahead of ESP-IDF's.  The fork also
+# defines MBEDTLS_ECP_DP_ED448_ENABLED, which breaks the build
+# (Ed448 requires SHA3).  We undef it here.
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -UMBEDTLS_ECP_DP_ED448_ENABLED
 )
