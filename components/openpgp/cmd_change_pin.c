@@ -28,6 +28,9 @@ int cmd_change_pin(void) {
         return SW_REFERENCE_NOT_FOUND();
     }
     uint8_t pin_len = file_get_data(pw)[0];
+    if (pin_len > apdu.nc) {
+        return SW_WRONG_LENGTH();
+    }
     uint16_t r = 0;
     r = check_pin(pw, apdu.data, pin_len);
     if (r != 0x9000) {

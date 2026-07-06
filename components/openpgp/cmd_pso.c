@@ -128,8 +128,12 @@ int cmd_pso(void) {
                 mbedtls_rsa_free(&ctx);
                 return SW_EXEC_ERROR();
             }
-            size_t cipher_len = apdu.nc > 0 ? apdu.nc - 1 : 0;
-            memcpy(padded, apdu.data + 1, cipher_len);
+            if (apdu.nc > key_size) {
+                mbedtls_rsa_free(&ctx);
+                return SW_WRONG_LENGTH();
+            }
+            size_t cipher_len = apdu.nc;
+            memcpy(padded, apdu.data, cipher_len);
             if (cipher_len < key_size) {
                 memset(padded + cipher_len, 0, key_size - cipher_len);
             }

@@ -95,7 +95,7 @@ static bool locked_out = true;
 
 uint8_t ready_pages = 0;
 
-bool flash_available = false;
+volatile bool flash_available = false;
 
 
 //this function has to be called from the core 0
