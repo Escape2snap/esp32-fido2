@@ -228,6 +228,10 @@ A 100ms startup delay is built into the firmware to minimize this.
   works but the 8-second scalar multiplication exceeds PC/SC timeouts
   in GPG. X25519 ECDH key generation needs completion. See the
   `feat/ed25519` branch for details.
+- **FIDO first-connection RX error:** On first USB enumeration (fresh flash
+  or power cycle), the host may report `FIDO err rx`.  A second connection
+  attempt works reliably.  Likely a host-side timing race with TinyUSB
+  enumeration.
 
 ---
 
