@@ -516,6 +516,17 @@ int scan_files_fido(void) {
     }
 
     flash_commit_sync(5000);
+    /* flash_commit_sync flushes the page cache, invalidating
+       the paut.data / ppaut.data pointers captured above.
+       Re-acquire them from the (now persisted) file entries. */
+    if (ef_authtoken) {
+        paut.data = file_get_data(ef_authtoken);
+        paut.len = file_get_size(ef_authtoken);
+    }
+    if (ef_pauthtoken) {
+        ppaut.data = file_get_data(ef_pauthtoken);
+        ppaut.len = file_get_size(ef_pauthtoken);
+    }
     return PICOKEYS_OK;
 }
 
@@ -534,6 +545,17 @@ void init_fido(void) {
         fido_initialized = true;
         scan_all();
         credential_migrate_rp_secure();
+        /* Re-acquire auth token pointers — both scan and migrate
+           can trigger flash commits that invalidate the page cache
+           pointers captured during scan_files_fido(). */
+        if (ef_authtoken) {
+            paut.data = file_get_data(ef_authtoken);
+            paut.len = file_get_size(ef_authtoken);
+        }
+        if (ef_pauthtoken) {
+            ppaut.data = file_get_data(ef_pauthtoken);
+            ppaut.len = file_get_size(ef_pauthtoken);
+        }
     }
 #ifdef ENABLE_OTP_APP
     init_otp();
