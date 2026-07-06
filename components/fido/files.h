@@ -53,5 +53,6 @@ extern file_t *ef_pin_admin;
 extern file_t *ef_authtoken;
 extern file_t *ef_keydev_enc;
 extern file_t *ef_largeblob;
+extern file_t *ef_pauthtoken;
 
 #endif //_FILES_H_
