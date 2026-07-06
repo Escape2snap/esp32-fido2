@@ -327,7 +327,11 @@ int credential_load(const uint8_t *cred_id, size_t cred_id_len, const uint8_t *r
     int ret = 0;
     CborError error = CborNoError;
     uint8_t *copy_cred_id = (uint8_t *) calloc(1, cred_id_len);
+    if (!copy_cred_id) {
+        CBOR_ERROR(CTAP2_ERR_INVALID_CREDENTIAL);
+    }
     if (!cred) {
+        free(copy_cred_id);
         CBOR_ERROR(CTAP2_ERR_INVALID_CREDENTIAL);
     }
     memset(cred, 0, sizeof(Credential));

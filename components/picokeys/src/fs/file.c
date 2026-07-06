@@ -405,13 +405,13 @@ int meta_delete(uint16_t fid) {
     asn1_ctx_t ctxi;
     asn1_ctx_init(file_get_data(ef), file_get_size(ef), &ctxi);
     while (walk_tlv(&ctxi, &p, &tag, &tag_len, &tag_data)) {
-        uint8_t *tpos = p - tag_len - format_tlv_len(tag_len, NULL) - 1;
+        uint8_t *tpos = p - tag_len - format_tlv_len(tag_len, NULL);
         if (tag_len < 2) {
             continue;
         }
         uint16_t cfid = get_uint16_be(tag_data);
         if (cfid == fid) {
-            uint16_t new_len = ctxi.len - 1 - tag_len - format_tlv_len(tag_len, NULL);
+            uint16_t new_len = ctxi.len - tag_len - format_tlv_len(tag_len, NULL);
             if (new_len == 0) {
                 flash_clear_file(ef);
             }

@@ -74,9 +74,6 @@ int cbor_make_credential(const uint8_t *data, size_t len) {
     {
         uint64_t val_u = 0;
         CBOR_FIELD_GET_UINT(val_u, 1);
-        if (val_c <= 4 && val_c != val_u) {
-            CBOR_ERROR(CTAP2_ERR_MISSING_PARAMETER);
-        }
         if (val_u < val_c) {
             CBOR_ERROR(CTAP2_ERR_INVALID_CBOR);
         }
@@ -133,6 +130,9 @@ int cbor_make_credential(const uint8_t *data, size_t len) {
                         {
                             CBOR_FIELD_GET_TEXT(pc->transports[pc->transports_len], 4);
                             pc->transports_len++;
+                            if (pc->transports_len >= 8) {
+                                CBOR_ERROR(CTAP2_ERR_CBOR_UNEXPECTED_TYPE);
+                            }
                         }
                         CBOR_PARSE_ARRAY_END(_f3, 4);
                     }
@@ -746,7 +746,7 @@ int cbor_make_credential(const uint8_t *data, size_t len) {
     }
     ctr++;
     file_put_data(ef_counter, (uint8_t *) &ctr, sizeof(ctr));
-    flash_commit();
+    flash_commit_sync(5000);
 err:
     CBOR_FREE_BYTE_STRING(clientDataHash);
     CBOR_FREE_BYTE_STRING(pinUvAuthParam);

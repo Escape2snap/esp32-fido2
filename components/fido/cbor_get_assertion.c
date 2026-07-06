@@ -109,9 +109,6 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
     {
         uint64_t val_u = 0;
         CBOR_FIELD_GET_UINT(val_u, 1);
-        if (val_c <= 2 && val_c != val_u) {
-            CBOR_ERROR(CTAP2_ERR_MISSING_PARAMETER);
-        }
         if (val_u < val_c) {
             CBOR_ERROR(CTAP2_ERR_INVALID_CBOR);
         }
@@ -136,6 +133,9 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
                         {
                             CBOR_FIELD_GET_TEXT(pc->transports[pc->transports_len], 4);
                             pc->transports_len++;
+                            if (pc->transports_len >= 8) {
+                                CBOR_ERROR(CTAP2_ERR_CBOR_UNEXPECTED_TYPE);
+                            }
                         }
                         CBOR_PARSE_ARRAY_END(_f3, 4);
                     }
@@ -336,7 +336,8 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
                                 if (!file_has_data(ef) || memcmp(file_get_data(ef), rp_id_hash, 32) != 0) {
                                     continue;
                                 }
-                                if (memcmp(file_get_data(ef) + 32, allowList[e].id.data, allowList[e].id.len) == 0) {
+                                size_t compare_len = MIN(allowList[e].id.len, file_get_size(ef) > 32 ? file_get_size(ef) - 32 : 0);
+                                if (compare_len > 0 && memcmp(file_get_data(ef) + 32, allowList[e].id.data, compare_len) == 0) {
                                     resident = true;
                                     break;
                                 }
@@ -748,9 +749,11 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
     mbedtls_platform_zeroize(largeBlobKey, sizeof(largeBlobKey));
     CBOR_CHECK(cbor_encoder_close_container(&encoder, &mapEncoder));
     resp_size = cbor_encoder_get_buffer_size(&encoder, ctap_resp->init.data + 1);
-    ctr++;
-    file_put_data(ef_counter, (uint8_t *) &ctr, sizeof(ctr));
-    flash_commit();
+    if (up) {
+        ctr++;
+        file_put_data(ef_counter, (uint8_t *) &ctr, sizeof(ctr));
+        flash_commit_sync(5000);
+    }
 err:
     CBOR_FREE_BYTE_STRING(clientDataHash);
     CBOR_FREE_BYTE_STRING(pinUvAuthParam);
