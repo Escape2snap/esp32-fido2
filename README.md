@@ -300,6 +300,11 @@ A 100ms startup delay is built into the firmware to minimize this.
   but still slower than the HW ECC accelerator (which doesn't support
   Edwards curves).  CCID timeout was increased to 10 s to accommodate this.
 
+- **FIDO first-connection RX error:** On first USB enumeration (fresh flash
+  or power cycle), the host may report `FIDO err rx`.  A second connection
+  attempt works reliably.  Likely a host-side timing race with TinyUSB
+  enumeration.
+>>>>>>> 56fcdb6 (docs: add FIDO first-connection RX note to readme)
 ---
 
 ## Fix History
@@ -381,7 +386,6 @@ in an infinite loop.
 | SELECT DATA buffer over-read | `cmd_select_data.c:25-27` | Added `apdu.nc < 1` check |
 | ECDH kdata overflow | `cmd_pso.c:167-169` | Added `key_size > sizeof(kdata)` check |
 | is_gpg not reset | `openpgp.c:411` | Set `is_gpg = true` on select |
-
 ---
 
 ## Build Configuration
