@@ -40,7 +40,7 @@
 
 #define USB_CONFIG_ATT_ONE TU_BIT(7)
 
-#define MAX_USB_POWER       2
+#define MAX_USB_POWER       50
 
 //--------------------------------------------------------------------+
 // Device Descriptors

@@ -159,7 +159,7 @@ static void resetAuthToken(bool persistent) {
     uint8_t t[32];
     random_fill_buffer(t, sizeof(t));
     file_put_data(ef, t, sizeof(t));
-    flash_commit();
+    flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS);
 }
 
 int resetPinUvAuthToken(void) {
@@ -279,7 +279,7 @@ static int check_keydev_encrypted(const uint8_t pin_token[32]) {
         encrypt_with_aad(pin_token, file_get_data(ef_keydev) + 1, 32, 2, tmp_keydev + 1);
         file_put_data(ef_keydev, tmp_keydev, sizeof(tmp_keydev));
         mbedtls_platform_zeroize(tmp_keydev, sizeof(tmp_keydev));
-        flash_commit();
+        flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS);
     }
     return PICOKEYS_OK;
 }
@@ -475,7 +475,7 @@ int cbor_client_pin(const uint8_t *data, size_t len) {
         mbedtls_platform_zeroize(paddedNewPin, sizeof(paddedNewPin));
         pin_derive_verifier(dhash, 16, hsh + 3);
         file_put_data(ef_pin, hsh, sizeof(hsh));
-        flash_commit();
+        flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS);
 
         pin_derive_session(dhash, 16, session_pin);
         ret = check_keydev_encrypted(session_pin);
@@ -587,7 +587,7 @@ int cbor_client_pin(const uint8_t *data, size_t len) {
         pin_derive_session(paddedNewPin, 16, session_pin);
         pin_data[0] = MAX_PIN_RETRIES;
         file_put_data(ef_pin, pin_data, sizeof(pin_data));
-        flash_commit();
+        flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS);
 
         ret = check_keydev_encrypted(session_pin);
         if (ret != PICOKEYS_OK) {
@@ -636,7 +636,7 @@ int cbor_client_pin(const uint8_t *data, size_t len) {
         if (ret != PICOKEYS_OK) {
             CBOR_ERROR(ret);
         }
-        flash_commit();
+        flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS);
 
         pin_data[0] = MAX_PIN_RETRIES;
         pin_data[1] = pin_len;
@@ -657,7 +657,7 @@ int cbor_client_pin(const uint8_t *data, size_t len) {
             file_put_data(ef_minpin, tmpf, file_get_size(ef_minpin));
             free(tmpf);
         }
-        flash_commit();
+        flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS);
         resetPinUvAuthToken();
         resetPersistentPinUvAuthToken();
         needs_power_cycle = false;
@@ -770,7 +770,7 @@ int cbor_client_pin(const uint8_t *data, size_t len) {
         file_put_data(ef_pin, pin_data, sizeof(pin_data));
         mbedtls_platform_zeroize(pin_data, sizeof(pin_data));
 
-        flash_commit();
+        flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS);
         file_t *ef_minpin = file_search_by_fid(EF_MINPINLEN, NULL, SPECIFY_EF);
         if (file_has_data(ef_minpin) && file_get_data(ef_minpin)[1] == 1) {
             if (subcommand == 0x09 && permissions == CTAP_PERMISSION_ACFG && rpId.present == false) {

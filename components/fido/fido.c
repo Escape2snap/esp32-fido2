@@ -98,6 +98,8 @@ INITIALIZER ( fido_ctor ) {
 }
 
 static int fido_unload(void) {
+    mbedtls_platform_zeroize(keydev_dec, sizeof(keydev_dec));
+    mbedtls_platform_zeroize(session_pin, sizeof(session_pin));
     return PICOKEYS_OK;
 }
 
@@ -534,6 +536,7 @@ void init_fido(void) {
     init_otp();
 #endif
     needs_power_cycle = false;
+    new_pin_mismatches = 0;
 }
 
 int wait_button_pressed(void) {

@@ -281,6 +281,9 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
     if (!hid_set_report_cb || hid_set_report_cb(itf, report_id, report_type, buffer, bufsize) == 0) {
         //usb_rx(itf, buffer, bufsize);
         if (itf == ITF_HID_CTAP) {
+            if (bufsize != 64) {
+                return;
+            }
             memcpy(hid_rx[itf].buffer + hid_rx[itf].w_ptr, buffer, bufsize);
             hid_rx[itf].w_ptr += bufsize;
             int proc_pkt = driver_process_usb_packet_hid(64);
@@ -309,7 +312,7 @@ CTAPHID_FRAME last_req = { 0 };
 uint32_t lock = 0;
 
 uint8_t thread_type = 0; //1 is APDU, 2 is CBOR
-extern bool cancel_button;
+extern volatile bool cancel_button;
 extern int cbor_process(uint8_t last_cmd, const uint8_t *data, size_t len);
 
 int driver_process_usb_nopacket_hid(void) {
@@ -343,8 +346,7 @@ int driver_process_usb_packet_hid(uint16_t read) {
             (ctap_req->cid == CID_BROADCAST && (FRAME_TYPE(ctap_req) != TYPE_INIT || ctap_req->init.cmd != CTAPHID_INIT))) {
             return ctap_error(CTAP1_ERR_INVALID_CHANNEL);
         }
-        if (board_millis() < lock && ctap_req->cid != last_req.cid &&
-            last_cmd_time + 100 > board_millis()) {
+        if (board_millis() < lock && ctap_req->cid != last_req.cid) {
             return ctap_error(CTAP1_ERR_CHANNEL_BUSY);
         }
         if (FRAME_TYPE(ctap_req) == TYPE_INIT) {
@@ -446,7 +448,7 @@ int driver_process_usb_packet_hid(uint16_t read) {
             if (MSG_LEN(ctap_req) != 1) {
                 return ctap_error(CTAP1_ERR_INVALID_LEN);
             }
-            if (ctap_req->init.data[0] > 10) {
+            if (ctap_req->init.data[0] > 9) {
                 return ctap_error(CTAP1_ERR_INVALID_PARAMETER);
             }
             lock = board_millis() + ctap_req->init.data[0] * 1000;
@@ -515,6 +517,10 @@ int driver_process_usb_packet_hid(uint16_t read) {
                  (msg_packet.len == 0 || (msg_packet.len == msg_packet.current_len && msg_packet.len > 0))) {
             thread_type = 2;
             select_app(fido_aid + 1, fido_aid[0]);
+            size_t check_len = (msg_packet.current_len == msg_packet.len && msg_packet.len > 0) ? msg_packet.len : MSG_LEN(ctap_req);
+            if (check_len > CTAP_MAX_CBOR_PAYLOAD + 1) { // +1 for command byte
+                return ctap_error(CTAP1_ERR_INVALID_LEN);
+            }
             if (msg_packet.current_len == msg_packet.len && msg_packet.len > 0) {
                 apdu_sent = cbor_process(last_cmd, msg_packet.data, msg_packet.len);
             }
@@ -529,7 +535,6 @@ int driver_process_usb_packet_hid(uint16_t read) {
             send_keepalive();
         }
         else if (ctap_req->init.cmd == CTAPHID_CANCEL) {
-            ctap_error(0x2D);
             msg_packet.len = msg_packet.current_len = 0;
             last_packet_time = 0;
             cancel_button = true;
@@ -589,16 +594,17 @@ void driver_exec_finished_hid(uint16_t size_next) {
 
 void driver_exec_finished_cont_hid(uint8_t itf, uint16_t size_next, uint16_t offset) {
     if (!hid_tx || ITF_HID_TOTAL == 0) return;
+    if (offset < 7) return;
     offset -= 7;
+    if (offset + sizeof(CTAPHID_FRAME) > USB_BUFFER_SIZE) return;
     ctap_resp = (CTAPHID_FRAME *) (hid_tx[itf].buffer + offset);
     ctap_resp->cid = ctap_req->cid;
     ctap_resp->init.bcnth = size_next >> 8;
     ctap_resp->init.bcntl = size_next & 0xff;
     send_buffer_size[itf] = size_next;
     ctap_resp->init.cmd = last_cmd;
+    if (size_next + 7 > USB_BUFFER_SIZE - offset) return;
     if (hid_write_offset(size_next+7, offset) > 0) {
-        //ctap_resp = (CTAPHID_FRAME *) ((uint8_t *) ctap_resp + 64 - 5);
-        //send_buffer_size[ITF_HID_CTAP] -= MIN(64 - 7, send_buffer_size[ITF_HID_CTAP]);
     }
 }
 
