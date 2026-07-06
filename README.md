@@ -368,6 +368,88 @@ in an infinite loop.
 
 ---
 
+## Fix History
+
+### PR #33 — CBOR COSE Algorithm Encoding Fix
+`cbor.c:165,232` — `-(alg+1)` → `-alg`
+
+**Root cause:** The CBOR COSE algorithm encoding used `-(alg + 1)` instead of the
+correct `-alg`. `cbor_encode_negative_int(absolute_value)` encodes CBOR major type 1
+with value `absolute_value - 1`, which decodes as `-absolute_value`. For ES256 (alg=-7),
+`-alg=7` produces CBOR -7 (correct), while `-(alg+1)=6` produced CBOR -6 (wrong).
+
+**Effect:** All COSE key encodings in getInfo, makeCredential, and getAssertion
+had incorrect algorithm identifiers. Browsers rejected the device because
+getInfo reported unrecognized algorithms.
+
+### PR #32 — Auth Token Pointer Staleness After Flash Commit
+`fido.c:494-505` — Add `paut`/`ppaut` pointer re-acquisition
+
+**Root cause:** `scan_files_fido()` captured `paut.data` and `ppaut.data` from the
+flash page cache at lines 466/479, then called `flash_commit_sync(5000)` at line 494
+which flushed the cache and freed those pages. getInfo later used the stale pointers
+via `encrypt_dev_state_block()` → `mbedtls_hkdf(ppaut.data)`, reading freed cache
+memory and causing crypto hangs.
+
+### PR #30 — HID Transaction Timeout
+`hid.c:100` — `200ms` → `1500ms`
+
+**Root cause:** HID transaction timeout was 200ms while CCID used 1500ms. getInfo
+processing (flash reads + AES encryption) could exceed 200ms, causing premature
+KEEPALIVE frames. Some browsers don't handle KEEPALIVE correctly and re-INIT
+in an infinite loop.
+
+### PR #28 — Protocol, Security & Stability Fixes
+| Fix | File | Detail |
+|-----|------|--------|
+| HID INIT channel ID | `hid.c:401` | SHA-256(nonce \|\| device_secret) per CTAP 2.1 §8.2.3 |
+| CCID bSeq use-after-free | `ccid.c:351` | Save seq before RX buffer consumed |
+| CTAP_MAX_PACKET_SIZE | `ctap_hid.h:145` | 128→127 segments (7609→7600 bytes) |
+| LOCK bypass | `hid.c:349` | Removed 100ms idle window |
+| CANCEL spec violation | `hid.c:535-536` | Removed response frame |
+| Mutex leak | `usb.c:296-303` | break-without-unlock fixed |
+| RSA PSO:DEC corruption | `cmd_pso.c:131` | Use full ciphertext, no byte stripping |
+| CHANGE PIN buffer over-read | `cmd_change_pin.c:30` | Added `pin_len > apdu.nc` check |
+| ACTIVATE FILE no-op | `cmd_activate_file.c:20` | Implemented per OpenPGP v3.4 §7.2.14 |
+| flash_commit_sync data race | `flash.c:200-211` | Added volatile + memory barrier |
+
+### PR #27 — CTAP2 / USB Transport / Security Hardening
+| Fix | File | Detail |
+|-----|------|--------|
+| Transport array overflow | `cbor_make_credential.c:133` | Added `>= 8` bounds check |
+| Transport array overflow | `cbor_get_assertion.c:136` | Added `>= 8` bounds check |
+| calloc NULL deref | `credential.c:327-334` | Added `!copy_cred_id` check + free |
+| memcmp buffer over-read | `cbor_get_assertion.c:339` | Added `MIN()` + file size validation |
+| Sign counter silent increment | `cbor_get_assertion.c:752` | Added `if (up)` guard |
+| Counter async commit | `cbor_get_assertion.c:755` | `flash_commit()` → `flash_commit_sync(5000)` |
+| CBOR key order | `cbor_make_credential.c:74-77` | Removed CTAP 2.1 spec violation |
+| keydev_dec/session_pin zeroize | `fido.c:99-100` | Added to `fido_unload()` |
+| bootloader_random_disable | `hwrng.c:33,63-66` | Added missing disable call |
+| SHA-256 error check | `serial.c:43-46` | Added `sha_ret != 0` check |
+| HID bufsize validation | `hid.c:283-286` | Added `bufsize != 64` check |
+| CTAP_MAX_PACKET_SIZE | `ctap_hid.h:145` | `128`→`127` segments |
+| USB power descriptor | `usb_descriptors.c:43` | 4mA→100mA |
+| USB power descriptor | `usb_descriptors.c:43` | 4mA→100mA |
+| flash use-after-free | `flash.c:134-138` | Save `old_file_data` before clear |
+| meta_delete TLV corruption | `file.c:408,414` | Remove spurious `-1` offset |
+| part0 NULL crash | `low_flash.c:247-250` | Added `!part0` check |
+| CBOR msg size check | `hid.c:520-523` | Added `CTAP_MAX_CBOR_PAYLOAD` bound |
+| cancel_button volatile | `hid.c:315` | `bool`→`volatile bool` |
+| APDU routing HID/CCID clash | `apdu.c:130,159` | Added `itf != ITF_SC_CCID/WCID` |
+
+### PR #24 — OpenPGP Card Implementation Fixes
+| Fix | File | Detail |
+|-----|------|--------|
+| PIN retry index (3-bytes off) | `openpgp.c:447-478` | Removed spurious `3 +` offset |
+| PSO:ENC/AES always failing | `cmd_pso.c:46-48` | Set `algo_fid = EF_ALGO_PRIV2` |
+| RESET RETRY always failing | `openpgp.c:272` | Added `!has_rc` to `load_dek` |
+| MSE SET buffer over-read | `cmd_mse.c:23-25` | Added `apdu.nc < 3` check |
+| SELECT DATA buffer over-read | `cmd_select_data.c:25-27` | Added `apdu.nc < 1` check |
+| ECDH kdata overflow | `cmd_pso.c:167-169` | Added `key_size > sizeof(kdata)` check |
+| is_gpg not reset | `openpgp.c:411` | Set `is_gpg = true` on select |
+
+---
+
 ## Build Configuration
 
 ### Hardware Acceleration
