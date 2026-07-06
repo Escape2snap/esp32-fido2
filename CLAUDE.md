@@ -162,6 +162,19 @@ On Linux both interfaces work reliably.
 
 The **BOOT button** (GPIO0) on the ESP32-S3 board serves as the FIDO2 user presence button. Press it when the browser/system prompts for confirmation.
 
+### FIDO First-Connection RX Error
+
+On first USB enumeration after flashing (or after device power cycle),
+the host may report `FIDO err rx` or the FIDO configuration manager may
+show an error.  The device recovers on the second connection attempt.
+
+**Root cause (suspected):** TinyUSB and the FIDO CBOR handler need a short
+settling time after USB enumeration.  A 100ms startup delay is already
+built into `main/main.c`; the issue may be a host-side timing race.
+
+**Workaround:** Unplug and re-plug the device, or simply retry the
+FIDO operation once.  Second and subsequent attempts work reliably.
+
 ---
 
 ## Algorithm Configuration
@@ -307,3 +320,12 @@ refactor: code restructuring
 perf:     performance optimization
 test:     testing
 ```
+
+## Claude Rules
+
+- **No `git push --force`.** Normal `git push` only.
+- **No unsigned commits.** Always commit with `-s` (Signed-off-by).
+- **On timeout, stop and wait for the user.** Never skip, retry, or work around.
+- **No `gh` CLI for PRs.** Use plain `git` for everything.
+- **English commit messages** matching the convention above.
+- **Worktree isolation** — always use `EnterWorktree` before editing files.
