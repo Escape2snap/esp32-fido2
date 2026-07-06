@@ -106,7 +106,7 @@ int cbor_large_blobs(const uint8_t *data, size_t len) {
                 CBOR_ERROR(CTAP1_ERR_INVALID_PARAMETER);
             }
             if (length > MAX_LARGE_BLOB_SIZE) {
-                CBOR_ERROR(CTAP2_ERR_LARGE_BLOB_STORAGE_FULL);
+                CBOR_ERROR(CTAP2_ERR_REQUEST_TOO_LARGE);
             }
             if (length < 17) {
                 CBOR_ERROR(CTAP1_ERR_INVALID_PARAMETER);
