@@ -493,7 +493,7 @@ int scan_files_fido(void) {
     else {
         printf("FATAL ERROR: Auth Token not found in memory!\r\n");
     }
-    file_t *ef_pauthtoken = file_search_by_fid(EF_PAUTHTOKEN, NULL, SPECIFY_EF);
+    ef_pauthtoken = file_search_by_fid(EF_PAUTHTOKEN, NULL, SPECIFY_EF);
     if (ef_pauthtoken) {
         if (!file_has_data(ef_pauthtoken)) {
             uint8_t t[32];
