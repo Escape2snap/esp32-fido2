@@ -270,9 +270,10 @@ static void release_dek(void) {
 }
 
 extern bool has_pwpiv;
+extern bool is_gpg;
 extern uint8_t session_pwpiv[32];
 int load_dek(void) {
-    if (!has_pw1 && !has_pw2 && !has_pw3 && !has_pwpiv) {
+    if (!has_pw1 && !has_pw2 && !has_pw3 && !has_pwpiv && !has_rc) {
         return PICOKEYS_NO_LOGIN;
     }
     int r = PICOKEYS_OK;
@@ -408,6 +409,7 @@ static int openpgp_select_aid(app_t *a, uint8_t force) {
     a->unload = openpgp_unload;
     init_openpgp();
     file_process_fci(file_openpgp, 1);
+    is_gpg = true;
     memcpy(res_APDU + res_APDU_size, "\x64\x06\x53\x04", 4);
     res_APDU_size += 4;
     int heap_left = heapLeft();
@@ -438,17 +440,17 @@ int pin_reset_retries(const file_t *pin, bool force) {
     if (!pw_status || !pw_retries) {
         return PICOKEYS_ERR_FILE_NOT_FOUND;
     }
-    if (3 + (pin->fid & 0xf) >= file_get_size(pw_status) || (pin->fid & 0xf) >= file_get_size(pw_retries)) {
+    if ((pin->fid & 0xf) >= file_get_size(pw_status) || (pin->fid & 0xf) >= file_get_size(pw_retries)) {
         return PICOKEYS_ERR_MEMORY_FATAL;
     }
     uint8_t p[64];
     memcpy(p, file_get_data(pw_status), file_get_size(pw_status));
-    uint8_t retries = p[3 + (pin->fid & 0xf)];
+    uint8_t retries = p[(pin->fid & 0xf)];
     if (retries == 0 && force == false) { //blocked
         return PICOKEYS_ERR_BLOCKED;
     }
     uint8_t max_retries = file_get_data(pw_retries)[(pin->fid & 0xf)];
-    p[3 + (pin->fid & 0xf)] = max_retries;
+    p[(pin->fid & 0xf)] = max_retries;
     int r = file_put_data(pw_status, p, file_get_size(pw_status));
     flash_commit();
     return r;
@@ -464,17 +466,17 @@ static int pin_wrong_retry(const file_t *pin) {
     }
     uint8_t p[64];
     memcpy(p, file_get_data(pw_status), file_get_size(pw_status));
-    if (p[3 + (pin->fid & 0xf)] > 0) {
-        p[3 + (pin->fid & 0xf)] -= 1;
+    if (p[(pin->fid & 0xf)] > 0) {
+        p[(pin->fid & 0xf)] -= 1;
         int r = file_put_data(pw_status, p, file_get_size(pw_status));
         if (r != PICOKEYS_OK) {
             return r;
         }
         flash_commit();
-        if (p[3 + (pin->fid & 0xf)] == 0) {
+        if (p[(pin->fid & 0xf)] == 0) {
             return PICOKEYS_ERR_BLOCKED;
         }
-        return p[3 + (pin->fid & 0xf)];
+        return p[(pin->fid & 0xf)];
     }
     return PICOKEYS_ERR_BLOCKED;
 }

@@ -23,6 +23,9 @@ int cmd_select_data(void) {
     if (P2(apdu) != 0x4) {
         return SW_WRONG_P1P2();
     }
+    if (apdu.nc < 1) {
+        return SW_WRONG_LENGTH();
+    }
     if (apdu.data[0] != 0x60) {
         return SW_WRONG_DATA();
     }

@@ -44,6 +44,9 @@ int cmd_pso(void) {
     }
     else if (P1(apdu) == 0x86 && P2(apdu) == 0x80) {
         // AES encipher — handled by is_aes path below
+        // algo_fid must be non-zero to pass the algo_ef lookup below.
+        // AES doesn't use the algorithm attribute file, so setting to DEC slot suffices.
+        algo_fid = EF_ALGO_PRIV2;
     }
     else {
         return SW_INCORRECT_P1P2();
@@ -125,8 +128,12 @@ int cmd_pso(void) {
                 mbedtls_rsa_free(&ctx);
                 return SW_EXEC_ERROR();
             }
-            size_t cipher_len = apdu.nc > 0 ? apdu.nc - 1 : 0;
-            memcpy(padded, apdu.data + 1, cipher_len);
+            if (apdu.nc > key_size) {
+                mbedtls_rsa_free(&ctx);
+                return SW_WRONG_LENGTH();
+            }
+            size_t cipher_len = apdu.nc;
+            memcpy(padded, apdu.data, cipher_len);
             if (cipher_len < key_size) {
                 memset(padded + cipher_len, 0, key_size - cipher_len);
             }
@@ -165,6 +172,9 @@ int cmd_pso(void) {
             uint8_t kdata[67];
             uint8_t *data = apdu.data, *end = data + apdu.nc;
             size_t len = 0;
+            if (key_size > sizeof(kdata)) {
+                return SW_EXEC_ERROR();
+            }
             if (mbedtls_asn1_get_tag(&data, end, &len, 0xA6) != 0) {
                 return SW_WRONG_DATA();
             }

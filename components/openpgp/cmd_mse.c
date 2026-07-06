@@ -21,6 +21,9 @@ int cmd_mse(void) {
     if (P1(apdu) != 0x41 || (P2(apdu) != 0xA4 && P2(apdu) != 0xB8)) {
         return SW_WRONG_P1P2();
     }
+    if (apdu.nc < 3) {
+        return SW_WRONG_LENGTH();
+    }
     if (apdu.data[0] != 0x83 || apdu.data[1] != 0x1 ||
         (apdu.data[2] != 0x2 && apdu.data[2] != 0x3)) {
         return SW_WRONG_DATA();
