@@ -95,6 +95,13 @@ static uint8_t itf_num;
 #endif
 
 static usb_buffer_t *ccid_rx = NULL, *ccid_tx = NULL;
+static uint8_t *ccid_seq = NULL;
+
+static void ccid_save_seq(uint8_t itf, uint8_t seq) {
+    if (ccid_seq) {
+        ccid_seq[itf] = seq;
+    }
+}
 
 int driver_process_usb_packet_ccid(uint8_t itf, uint16_t rx_read);
 void ccid_init(void);
@@ -147,6 +154,10 @@ static void ccid_init_buffers(void) {
     if (ccid_resp_fast == NULL) {
         ccid_resp_fast = (ccid_header_t **)calloc(ITF_SC_TOTAL, sizeof(ccid_header_t *));
         if (!ccid_resp_fast) return;
+    }
+    if (ccid_seq == NULL) {
+        ccid_seq = (uint8_t *)calloc(ITF_SC_TOTAL, sizeof(uint8_t));
+        if (!ccid_seq) return;
     }
     ccid_buffers_ok = true;
 }
@@ -230,6 +241,7 @@ int driver_process_usb_packet_ccid(uint8_t itf, uint16_t rx_read) {
         }
         //printf("ccid_process %ld %d %x %x %d\n",ccid_header[itf]->dwLength,rx_read-10,ccid_header[itf]->bMessageType,ccid_header[itf]->bSeq,ccid_rx[itf].w_ptr - ccid_rx[itf].r_ptr - 10);
         if (ccid_header[itf]->dwLength <= (uint32_t)(ccid_rx[itf].w_ptr - ccid_rx[itf].r_ptr - 10)){
+            ccid_save_seq(itf, ccid_header[itf]->bSeq);
             ccid_rx[itf].r_ptr += (uint16_t)(ccid_header[itf]->dwLength + 10);
             if (ccid_rx[itf].r_ptr >= ccid_rx[itf].w_ptr) {
                 ccid_rx[itf].r_ptr = ccid_rx[itf].w_ptr = 0;
@@ -348,7 +360,7 @@ void driver_exec_finished_cont_ccid(uint8_t itf, uint16_t size_next, uint16_t of
     ccid_response[itf]->bMessageType = CCID_DATA_BLOCK_RET;
     ccid_response[itf]->dwLength = size_next;
     ccid_response[itf]->bSlot = 0;
-    ccid_response[itf]->bSeq = ccid_header[itf]->bSeq;
+    ccid_response[itf]->bSeq = ccid_seq ? ccid_seq[itf] : 0;
     ccid_response[itf]->abRFU0 = ccid_status;
     ccid_response[itf]->abRFU1 = 0;
     ccid_write_offset(itf, size_next+10, offset);

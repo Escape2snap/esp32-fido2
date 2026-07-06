@@ -197,7 +197,7 @@ void flash_commit(void) {
 }
 
 
-extern bool flash_available;
+extern volatile bool flash_available;
 bool flash_commit_sync(uint32_t timeout_ms) {
     flash_commit();  /* sets flash_available = true */
     /* Do NOT call low_flash_task() here — it calls
@@ -206,6 +206,9 @@ bool flash_commit_sync(uint32_t timeout_ms) {
        Instead yield so core0_loop's flash_task() drains the queue. */
     uint32_t deadline = board_millis() + timeout_ms;
     while (flash_available && board_millis() < deadline) {
+        /* flash_available is volatile; read barrier to prevent
+           compiler optimizations from caching the value. */
+        __sync_synchronize();
         vTaskDelay(1);
     }
     return !flash_available;

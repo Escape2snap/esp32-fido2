@@ -18,5 +18,13 @@
 #include "openpgp.h"
 
 int cmd_activate_file(void) {
+    if (P1(apdu) != 0x0 || P2(apdu) != 0x0) {
+        return SW_INCORRECT_P1P2();
+    }
+    if (apdu.nc != 0) {
+        return SW_WRONG_LENGTH();
+    }
+    file_initialize_flash(true);
+    scan_files_openpgp();
     return SW_OK();
 }

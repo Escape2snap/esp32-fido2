@@ -31,6 +31,7 @@ static portMUX_TYPE mutex = portMUX_INITIALIZER_UNLOCKED;
 #include "picokeys_version.h"
 #include "apdu.h"
 #include "usb.h"
+#include "mbedtls/sha256.h"
 
 extern void init_fido(void);
 bool is_nk = false;
@@ -316,7 +317,7 @@ extern volatile bool cancel_button;
 extern int cbor_process(uint8_t last_cmd, const uint8_t *data, size_t len);
 
 int driver_process_usb_nopacket_hid(void) {
-    if (last_packet_time > 0 && last_packet_time + 500 < board_millis()) {
+    if (last_packet_time > 0 && last_packet_time + CTAPHID_TRANS_TIMEOUT < board_millis()) {
         ctap_error(CTAP1_ERR_MSG_TIMEOUT);
         last_packet_time = 0;
         msg_packet.len = msg_packet.current_len = 0;
@@ -400,7 +401,19 @@ int driver_process_usb_packet_hid(uint16_t read) {
             CTAPHID_INIT_REQ *req = (CTAPHID_INIT_REQ *) ctap_req->init.data;
             CTAPHID_INIT_RESP *resp = (CTAPHID_INIT_RESP *) ctap_resp->init.data;
             memcpy(resp->nonce, req->nonce, sizeof(resp->nonce));
-            resp->cid = 0x01000000;
+            uint8_t ch_hash[32];
+            mbedtls_sha256_context shactx;
+            mbedtls_sha256_init(&shactx);
+            mbedtls_sha256_starts(&shactx, 0);
+            mbedtls_sha256_update(&shactx, req->nonce, sizeof(req->nonce));
+            mbedtls_sha256_update(&shactx, pico_serial_hash, sizeof(pico_serial_hash));
+            mbedtls_sha256_finish(&shactx, ch_hash);
+            mbedtls_sha256_free(&shactx);
+            memcpy(&resp->cid, ch_hash, sizeof(resp->cid));
+            if (resp->cid == CID_BROADCAST || resp->cid == 0) {
+                resp->cid = 0x01000000;
+            }
+            memset(ch_hash, 0, sizeof(ch_hash));
             resp->versionInterface = CTAPHID_IF_VERSION;
             resp->versionMajor = get_version_major ? get_version_major() : PICOKEYS_SDK_VERSION_MAJOR;
             resp->versionMinor = get_version_minor ? get_version_minor() : PICOKEYS_SDK_VERSION_MINOR;
@@ -562,9 +575,6 @@ int driver_process_usb_packet_hid(uint16_t read) {
 }
 
 static void send_keepalive(void) {
-    if (thread_type == 1) {
-        return;
-    }
     CTAPHID_FRAME *resp = (CTAPHID_FRAME *) (hid_tx[ITF_HID_CTAP].buffer + sizeof(hid_tx[ITF_HID_CTAP].buffer) - 64);
     //memset(ctap_resp, 0, sizeof(CTAPHID_FRAME));
     resp->cid = ctap_req->cid;

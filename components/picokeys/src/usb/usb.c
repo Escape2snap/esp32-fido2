@@ -296,12 +296,13 @@ void card_exit(void) {
 #ifndef ENABLE_EMULATION
             mutex_enter_blocking(&mutex);
 #endif
-            if (queue_try_remove(&card_to_usb_q, &m) == false) {
-                break;
-            }
+            bool removed = queue_try_remove(&card_to_usb_q, &m);
 #ifndef ENABLE_EMULATION
             mutex_exit(&mutex);
 #endif
+            if (removed == false) {
+                break;
+            }
         }
         led_set_mode(MODE_SUSPENDED);
 #ifdef ESP_PLATFORM
