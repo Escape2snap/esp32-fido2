@@ -40,5 +40,8 @@ void serial_init(void) {
     for (size_t i = 0; i < sizeof(pico_serial); i++) {
         snprintf(&pico_serial_str[2 * i], 3, "%02X", pico_serial.id[i]);
     }
-    mbedtls_sha256(pico_serial.id, sizeof(pico_serial.id), pico_serial_hash, false);
+    int sha_ret = mbedtls_sha256(pico_serial.id, sizeof(pico_serial.id), pico_serial_hash, false);
+    if (sha_ret != 0) {
+        memset(pico_serial_hash, 0, sizeof(pico_serial_hash));
+    }
 }

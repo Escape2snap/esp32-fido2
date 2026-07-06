@@ -162,7 +162,7 @@ static CborError COSE_key_params(int crv, int alg, mbedtls_ecp_group *grp, mbedt
     CBOR_CHECK(cbor_encode_uint(mapEncoder, kty));
 
     CBOR_CHECK(cbor_encode_uint(mapEncoder, 3));
-    CBOR_CHECK(cbor_encode_negative_int(mapEncoder, -alg));
+    CBOR_CHECK(cbor_encode_negative_int(mapEncoder, -(alg + 1)));
 
     CBOR_CHECK(cbor_encode_negative_int(mapEncoder, 1));
     CBOR_CHECK(cbor_encode_uint(mapEncoder, crv));
@@ -229,7 +229,7 @@ CborError COSE_public_key(int alg, CborEncoder *mapEncoderParent, CborEncoder *m
     CborError error = CborNoError;
     CBOR_CHECK(cbor_encoder_create_map(mapEncoderParent, mapEncoder, 2));
     CBOR_CHECK(cbor_encode_text_stringz(mapEncoder, "alg"));
-    CBOR_CHECK(cbor_encode_negative_int(mapEncoder, -alg));
+    CBOR_CHECK(cbor_encode_negative_int(mapEncoder, -(alg + 1)));
     CBOR_CHECK(cbor_encode_text_stringz(mapEncoder, "type"));
     CBOR_CHECK(cbor_encode_text_stringz(mapEncoder, "public-key"));
     CBOR_CHECK(cbor_encoder_close_container(mapEncoderParent, mapEncoder));

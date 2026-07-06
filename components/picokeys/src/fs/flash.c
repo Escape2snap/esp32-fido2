@@ -67,10 +67,10 @@ void flash_set_bounds(uintptr_t start, uintptr_t end) {
 }
 
 static uintptr_t allocate_free_addr(uint16_t size, bool persistent) {
-    if (size > FLASH_SECTOR_SIZE) {
+    size_t real_size = size + sizeof(uint16_t) + sizeof(uintptr_t) + sizeof(uint16_t) + sizeof(uintptr_t); //len+len size+next address+fid+prev_addr size
+    if (real_size > FLASH_SECTOR_SIZE) {
         return 0x0; //ERROR
     }
-    size_t real_size = size + sizeof(uint16_t) + sizeof(uintptr_t) + sizeof(uint16_t) + sizeof(uintptr_t); //len+len size+next address+fid+prev_addr size
     uintptr_t next_base = 0x0, endp = end_data_pool, startp = start_data_pool;
     if (persistent) {
         endp = end_rom_pool;
@@ -131,10 +131,11 @@ static int flash_write_data_to_file_offset(file_t *file, const uint8_t *data, ui
             return PICOKEYS_OK;
         }
         else {   //we clear the old file
+            uint8_t *old_file_data = file->data;
             flash_clear_file(file);
             if (offset > 0) {
                 old_data = (uint8_t *) calloc(1, offset + len);
-                memcpy(old_data, flash_read((uintptr_t) (file->data + sizeof(uint16_t))), offset);
+                memcpy(old_data, flash_read((uintptr_t) (old_file_data + sizeof(uint16_t))), offset);
                 memcpy(old_data + offset, data, len);
                 len = offset + len;
                 data = old_data;

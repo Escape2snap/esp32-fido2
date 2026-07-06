@@ -31,6 +31,7 @@
  #ifdef ESP_PLATFORM
   #include "compat/esp_compat.h"
   #include "esp_partition.h"
+  #include "esp_log.h"
   const esp_partition_t *part0;
   /* ESP-IDF's esp_partition_erase_range / esp_partition_write manage
      cache and interrupts internally via the flash guard; no manual
@@ -198,6 +199,10 @@ void low_flash_init(void) {
     uint32_t data_end_addr;
 #if defined(ESP_PLATFORM)
     part0 = esp_partition_find_first(0x40, 0x1, "part0");
+    if (!part0) {
+        ESP_LOGE("low_flash", "part0 partition not found!");
+        return;
+    }
     esp_partition_mmap(part0, 0, part0->size, ESP_PARTITION_MMAP_DATA, (const void **)&map, (esp_partition_mmap_handle_t *)&fd_map);
     data_start_addr = 0;
     data_end_addr = part0->size;
