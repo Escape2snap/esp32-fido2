@@ -142,7 +142,7 @@ typedef struct {
 
 // Low-level error codes. Return as negatives.
 
-#define CTAP_MAX_PACKET_SIZE    (64 - 7 + 128 * (64 - 5))
+#define CTAP_MAX_PACKET_SIZE    (64 - 7 + 127 * (64 - 5))
 #define CTAP_MAX_CBOR_PAYLOAD   (USB_BUFFER_SIZE - 64 - 7 - 1)
 
 #define CTAP1_ERR_NONE                0x00    // No error
