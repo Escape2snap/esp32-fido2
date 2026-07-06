@@ -9,3 +9,4 @@ file_t *ef_pin_admin = NULL;
 file_t *ef_authtoken = NULL;
 file_t *ef_keydev_enc = NULL;
 file_t *ef_largeblob = NULL;
+file_t *ef_pauthtoken = NULL;
