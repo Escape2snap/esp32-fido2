@@ -20,8 +20,9 @@ const fe25519 fe25519_two  = { { 2, 0, 0, 0, 0, 0, 0, 0 } };
 /*  Internal helpers                                                  */
 /* ----------------------------------------------------------------- */
 
-/* Propagate carries in a 16-limb product array (used before reduction) */
-static void carry_propagate(uint32_t r[16]) {
+/* Propagate carries in a 16-limb product array (used before reduction).
+ * Kept as a utility even if not currently called from every path. */
+__attribute__((unused)) static void carry_propagate(uint32_t r[16]) {
     uint64_t c;
     for (int i = 0; i < 15; i++) {
         c = (uint64_t)r[i];
