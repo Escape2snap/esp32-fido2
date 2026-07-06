@@ -163,9 +163,7 @@ int cmd_keypair_gen(void) {
         else {
             return SW_FUNC_NOT_SUPPORTED();
         }
-#ifdef MBEDTLS_EDDSA_C
 keygen_done:
-#endif
         file_t *pbef = file_search_by_fid(fid + 3, NULL, SPECIFY_EF);
         if (!pbef) {
             return SW_REFERENCE_NOT_FOUND();
