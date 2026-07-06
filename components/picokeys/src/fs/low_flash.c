@@ -144,7 +144,10 @@ void low_flash_task(void){
                     //printf("WRITTING %X\n",flash_pages[r].address-XIP_BASE);
                     flash_range_erase(flash_pages[r].address - XIP_BASE, FLASH_SECTOR_SIZE);
                     flash_range_program(flash_pages[r].address - XIP_BASE, flash_pages[r].page, FLASH_SECTOR_SIZE);
-                    mutex_enter_blocking(&mtx_flash);
+                    /* scheduler is suspended — use try_enter (no blocking) */
+                    if (!mutex_try_enter(&mtx_flash, NULL)) {
+                        printf("ERROR: lost mutex during flash op\n");
+                    }
                     xTaskResumeAll();
                     if (multicore_lockout_end_timeout_us(1000) == false) {
                         printf("WARN: FLASH LOCKOUT END TIMEOUT\n");
@@ -195,7 +198,9 @@ void low_flash_task(void){
                     vTaskSuspendAll();
                     mutex_exit(&mtx_flash);
                     flash_range_erase(flash_pages[r].address - XIP_BASE, flash_pages[r].page_size ? ((int) (flash_pages[r].page_size / FLASH_SECTOR_SIZE)) * FLASH_SECTOR_SIZE : FLASH_SECTOR_SIZE);
-                    mutex_enter_blocking(&mtx_flash);
+                    if (!mutex_try_enter(&mtx_flash, NULL)) {
+                        printf("ERROR: lost mutex during flash erase\n");
+                    }
                     xTaskResumeAll();
                     if (multicore_lockout_end_timeout_us(1000) == false) {
                         printf("WARN: FLASH LOCKOUT END TIMEOUT\n");
