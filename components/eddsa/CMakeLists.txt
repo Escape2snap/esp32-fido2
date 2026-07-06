@@ -20,20 +20,20 @@ idf_component_register(
     REQUIRES mbedtls
 )
 
-target_compile_definitions(${COMPONENT_LIB} PRIVATE
-    MBEDTLS_EDDSA_C=1
-    MBEDTLS_ECP_DP_ED25519_ENABLED=1
-)
-
-# Note: ED448_ENABLED is commented out in the fork's mbedtls_config.h
-# because we don't support Ed448 and its SHA-3 prerequisite is not
-# configured.  If you need Ed448, also enable MBEDTLS_SHA3_C.
+# Ed448 is disabled in the fork's mbedtls_config.h because we don't support
+# it and its SHA-3 prerequisite is not configured.  The undef below is an
+# extra safety net in case the fork is updated and re-enables it.
+# If you need Ed448, also enable MBEDTLS_SHA3_C in sdkconfig.
 set_source_files_properties(
     ${FORK_DIR}/library/eddsa.c
     PROPERTIES COMPILE_FLAGS
-        "-Wno-error=switch -Wno-switch -Wno-error=unused-function -Wno-error=unused-parameter"
+        "-Wno-error=switch -Wno-switch -Wno-error=unused-function -Wno-error=unused-parameter -UMBEDTLS_ECP_DP_ED448_ENABLED"
 )
 set_source_files_properties(
     ${EDDSA_SRC_DIR}/eddsa_ecp_extras.c
-    PROPERTIES COMPILE_FLAGS "-Wno-error=switch -Wno-switch"
+    PROPERTIES COMPILE_FLAGS "-Wno-error=switch -Wno-switch -UMBEDTLS_ECP_DP_ED448_ENABLED"
+)
+set_source_files_properties(
+    ${EDDSA_SRC_DIR}/fe25519.c
+    PROPERTIES COMPILE_FLAGS "-UMBEDTLS_ECP_DP_ED448_ENABLED"
 )
