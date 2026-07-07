@@ -15,16 +15,10 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <stdio.h>
-#include <inttypes.h>
 #include "openpgp.h"
 #include "otp.h"
 
-#define DBG_TAG "[DBG_fix-openpgp-pin-retry]"
-#define DBG_PRINTF(...) do { printf(__VA_ARGS__); fflush(stdout); } while(0)
-
 int cmd_reset_retry(void) {
-    DBG_PRINTF("%s cmd_reset_retry p1=0x%02x p2=0x%02x nc=%" PRIu32 "\n", DBG_TAG, P1(apdu), P2(apdu), apdu.nc);
     if (P2(apdu) != 0x81) {
         return SW_REFERENCE_NOT_FOUND();
     }
@@ -33,23 +27,18 @@ int cmd_reset_retry(void) {
         file_t *pw = NULL;
         has_pw1 = false;
         if (!(pw = file_search_by_fid(EF_PW1, NULL, SPECIFY_EF))) {
-            DBG_PRINTF("%s cmd_reset_retry: EF_PW1 not found\n", DBG_TAG);
             return SW_REFERENCE_NOT_FOUND();
         }
         if (P1(apdu) == 0x0) {
-            DBG_PRINTF("%s cmd_reset_retry: using RC\n", DBG_TAG);
             file_t *rc;
             if (!(rc = file_search_by_fid(EF_RC, NULL, SPECIFY_EF))) {
-                DBG_PRINTF("%s cmd_reset_retry: RC file not found\n", DBG_TAG);
                 return SW_REFERENCE_NOT_FOUND();
             }
             uint8_t pin_len = file_get_data(rc)[0];
-            DBG_PRINTF("%s cmd_reset_retry: rc_pin_len=%d\n", DBG_TAG, pin_len);
             if (apdu.nc <= pin_len) {
                 return SW_WRONG_LENGTH();
             }
             uint16_t r = check_pin(rc, apdu.data, pin_len);
-            DBG_PRINTF("%s cmd_reset_retry: check_pin(rc) returned 0x%04x\n", DBG_TAG, r);
             if (r != 0x9000) {
                 return r;
             }
@@ -60,9 +49,7 @@ int cmd_reset_retry(void) {
             isUserAuthenticated = false;
         }
         else if (P1(apdu) == 0x2) {
-            DBG_PRINTF("%s cmd_reset_retry: using PW3 (has_pw3=%d)\n", DBG_TAG, has_pw3);
             if (!has_pw3) {
-                DBG_PRINTF("%s cmd_reset_retry: PW3 not verified -> SW_CONDITIONS_NOT_SATISFIED\n", DBG_TAG);
                 return SW_CONDITIONS_NOT_SATISFIED();
             }
             newpin_len = apdu.nc;
@@ -91,12 +78,9 @@ int cmd_reset_retry(void) {
         }
         flash_commit();
         if ((r = load_dek()) != PICOKEYS_OK) {
-            DBG_PRINTF("%s cmd_reset_retry: load_dek failed after reset\n", DBG_TAG);
             return SW_EXEC_ERROR();
         }
-        DBG_PRINTF("%s cmd_reset_retry: SUCCESS newpin_len=%d\n", DBG_TAG, newpin_len);
         return SW_OK();
     }
-    DBG_PRINTF("%s cmd_reset_retry: invalid P1=0x%02x\n", DBG_TAG, P1(apdu));
     return SW_INCORRECT_P1P2();
 }
