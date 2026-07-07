@@ -239,6 +239,22 @@ A 100ms startup delay is built into the firmware to minimize this.
 
 ## Fix History
 
+### PR #37 — PIN Retry Counter Not Decrementing
+`files.c:138-139`, `cmd_verify.c:59`, `openpgp.c:217-222,448-465,474-492` — PW_STATUS DO C4 byte layout fix
+
+**Root cause:** `EF_PW_PRIV` (PW_STATUS DO C4) byte layout did not match
+[OpenPGP Card spec v3.4 §4.3.1](https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.pdf).
+The spec defines 7 bytes as `[PW1_validity, max_PW1_len, max_RC_len, max_PW3_len,
+PW1_retries, RC_retries, PW3_retries]`, but the code used
+`{0x01, 3, 3, 3, 0, 0, 0}` — treating bytes 1–3 as retry counters and
+leaving bytes 4–6 (actual retry counters) at 0. This caused `gpg --card-status`
+to show `PIN retry counter: 0 0 0` while still "working" by decrementing
+the max-length fields instead.
+
+**Effect:** All three passwords were blocked from the first boot. The card
+appeared to accept unlimited wrong PINs because the retry counters at bytes 4–6
+were never decremented. gpg correctly read bytes 4–6 and reported all 0s.
+
 ### PR #33 — CBOR COSE Algorithm Encoding Fix
 `cbor.c:165,232` — `-(alg+1)` → `-alg`
 
@@ -392,6 +408,10 @@ refactor: code restructuring
 perf:     performance optimization
 test:     testing
 ```
+
+Scope goes **after the colon with a space**, not in parentheses:
+- ✅ `fix: openpgp correct PW_STATUS byte layout`
+- ❌ `fix(openpgp): correct PW_STATUS byte layout`
 
 ---
 

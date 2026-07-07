@@ -272,6 +272,10 @@ perf:     performance optimization
 test:     testing
 ```
 
+Scope goes **after the colon with a space**, not in parentheses:
+- ✅ `fix: openpgp correct PW_STATUS byte layout`
+- ❌ `fix(openpgp): correct PW_STATUS byte layout`
+
 ## Claude Rules
 
 - **No force commands.** Never use `--force` or `-f` with any command (git push, git reset, git checkout, rm, etc.). Normal operations only.
