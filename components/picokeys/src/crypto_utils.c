@@ -42,12 +42,27 @@ static const mbedtls_md_info_t *SHA256(void) {
 }
 
 void derive_kbase(uint8_t kbase[32]) {
-    const uint8_t nootp_salt[] = "NO-OTP";
-    if (otp_key_1) {
-        mbedtls_hkdf(SHA256(), pico_serial_hash, sizeof(pico_serial_hash), otp_key_1, 32, (const uint8_t *)"DEVICE/ROOT", 12, kbase, 32);
+    // Per-device random salt, generated at first boot.
+    // Without this salt, kbase depends only on serial number (exposed via USB),
+    // making offline key derivation trivial.  The salt forces an attacker
+    // who only has the serial number (remote, no flash read) to guess 32 bytes.
+    uint8_t device_salt[32] = {0};
+    file_t *ef = file_search(0x1130);  // EF_DEV_SALT
+    if (ef && file_has_data(ef) && file_get_size(ef) >= 32) {
+        memcpy(device_salt, file_get_data(ef), 32);
     }
     else {
-        mbedtls_hkdf(SHA256(), nootp_salt, sizeof(nootp_salt)-1, pico_serial_hash, sizeof(pico_serial_hash), (const uint8_t *)"DEVICE/ROOT", 12, kbase, 32);
+        // Fallback for devices initialised before salt was introduced.
+        // These keep the original "NO-OTP" derivation so the kbase stays the same.
+        // New devices always have the salt created in scan_files_fido().
+        memcpy(device_salt, "NO-OTP", 6);
+    }
+
+    if (otp_key_1) {
+        mbedtls_hkdf(SHA256(), device_salt, 32, otp_key_1, 32, (const uint8_t *)"DEVICE/ROOT", 12, kbase, 32);
+    }
+    else {
+        mbedtls_hkdf(SHA256(), device_salt, 32, pico_serial_hash, 32, (const uint8_t *)"DEVICE/ROOT", 12, kbase, 32);
     }
 }
 
