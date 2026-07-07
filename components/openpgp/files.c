@@ -498,13 +498,7 @@ file_t file_entries[] = {
     /* 137 */ { .fid = EF_PRIV_DO_4, .parent = 0, .name = NULL,
                .type = FILE_TYPE_INTERNAL_EF | FILE_DATA_FLASH, .data = NULL,
                .ef_structure = FILE_EF_TRANSPARENT, .acl = ACL_WP },
-    /* 138 */ { .fid = EF_PW_RETRIES, .parent = 0, .name = NULL,
-               .type = FILE_TYPE_INTERNAL_EF | FILE_DATA_FLASH, .data = NULL,
-               .ef_structure = FILE_EF_TRANSPARENT, .acl = ACL_R_WP },
-    /* 139 */ { .fid = EF_PW_STATUS, .parent = 0, .name = NULL,
-               .type = FILE_TYPE_INTERNAL_EF | FILE_DATA_FLASH, .data = NULL,
-               .ef_structure = FILE_EF_TRANSPARENT, .acl = ACL_R_WP },
-    /* 140 */ { .fid = EF_DEK_PWPIV, .parent = 0, .name = NULL,
+    /* 138 */ { .fid = EF_DEK_PWPIV, .parent = 0, .name = NULL,
                .type = FILE_TYPE_INTERNAL_EF | FILE_DATA_FLASH, .data = NULL,
                .ef_structure = FILE_EF_TRANSPARENT, .acl = ACL_NONE },
 
@@ -525,9 +519,9 @@ file_t file_entries[] = {
     { .fid = EF_OTP_PIN, .parent = 0, .name = NULL, .type = FILE_TYPE_INTERNAL_EF | FILE_DATA_FLASH, .data = NULL, .ef_structure = FILE_EF_TRANSPARENT, .acl = ACL_NONE },
     { .fid = EF_PIN_ADMIN, .parent = 0, .name = NULL, .type = FILE_TYPE_INTERNAL_EF | FILE_DATA_FLASH, .data = NULL, .ef_structure = FILE_EF_TRANSPARENT, .acl = ACL_NONE },
     { .fid = EF_DEV_SALT, .parent = 0, .name = NULL, .type = FILE_TYPE_INTERNAL_EF | FILE_DATA_FLASH, .data = NULL, .ef_structure = FILE_EF_TRANSPARENT, .acl = ACL_NONE },
-    /* 141 */ { .fid = 0x0000, .parent = 0, .name = openpgp_aid, .type = FILE_TYPE_WORKING_EF,
+    /* 139 */ { .fid = 0x0000, .parent = 0, .name = openpgp_aid, .type = FILE_TYPE_WORKING_EF,
                .data = NULL, .ef_structure = FILE_EF_TRANSPARENT, .acl = ACL_RO },
-    /* 142 */ { .fid = 0x0000, .parent = 0xff, .name = NULL, .type = FILE_TYPE_NOT_KNOWN, .data = NULL,
+    /* 140 */ { .fid = 0x0000, .parent = 0xff, .name = NULL, .type = FILE_TYPE_NOT_KNOWN, .data = NULL,
                .ef_structure = 0, .acl = ACL_NONE }                                                                                       //end
 };
 
