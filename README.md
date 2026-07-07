@@ -488,18 +488,17 @@ test:     testing
 ### Key Hierarchy
 
 ```
-[Optional] External OTP key (e.g., Nitrokey OTP app, provisioned at runtime)
-  └── If absent, falls back to constant "NO-OTP" salt
-
-ESP32-S3 unique chip serial (exposed via USB management commands)
-  └── HKDF-SHA256(otp_key or "NO-OTP", chip_serial, "DEVICE/ROOT")
-        └── Device Master Key (keydev) — encrypted in Flash
-              └── AES-GCM/ChaCha20-Poly1305
-                    └── Encrypted private keys → Flash storage
+[Random 32-byte device salt] — generated at first boot, per-device unique
+  └── Replaces compile-time constant "NO-OTP" for kbase derivation
+        └── HKDF-SHA256(device_salt, chip_serial or OTP, "DEVICE/ROOT")
+              └── Device Master Key (keydev) — encrypted in Flash
+                    └── AES-GCM/ChaCha20-Poly1305
+                          └── Encrypted private keys → Flash storage
 ```
 
 All private key material is **encrypted at rest** using a key hierarchy rooted
-in the chip's serial number. The optional OTP key adds entropy when provisioned.
+in a per-device random salt (generated at first boot) and the chip's serial
+number. The optional OTP key adds additional entropy when provisioned.
 
 > **⚠️ Without an OTP key**, the root derivation depends solely on the chip
 > serial number (obtainable via USB). Physical flash readout + serial number

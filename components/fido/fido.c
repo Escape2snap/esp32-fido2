@@ -401,6 +401,15 @@ int encrypt_keydev_f1(const uint8_t keydev[32]) {
 }
 
 int scan_files_fido(void) {
+    // Initialize device salt (random per-device, used in kbase derivation)
+    file_t *ef_salt = file_search(EF_DEV_SALT);
+    if (!file_has_data(ef_salt)) {
+        const uint8_t *salt = random_bytes_get(32);
+        file_put_data(ef_salt, salt, 32);
+        flash_commit();
+        printf("DEVICE SALT generated\n");
+    }
+
     ef_keydev = file_search_by_fid(EF_KEY_DEV, NULL, SPECIFY_EF);
     ef_keydev_enc = file_search_by_fid(EF_KEY_DEV_ENC, NULL, SPECIFY_EF);
     if (ef_keydev) {

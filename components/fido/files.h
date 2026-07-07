@@ -34,6 +34,7 @@
 #define EF_PIN_COMPLEXITY_POLICY 0x1102
 #define EF_DEV_STATE    0x1103
 #define EF_DEV_CONF     0x1122
+#define EF_DEV_SALT     0x1130
 #define EF_CRED         0xCF00 // Creds at 0xCF00 - 0xCFFF
 #define EF_RP           0xD000 // RPs at 0xD000 - 0xD0FF
 #define EF_LARGEBLOB    0x1101 // Large Blob Array
