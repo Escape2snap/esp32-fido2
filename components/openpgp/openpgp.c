@@ -452,7 +452,9 @@ int pin_reset_retries(const file_t *pin, bool force) {
     uint8_t max_retries = file_get_data(pw_retries)[(pin->fid & 0xf)];
     p[(pin->fid & 0xf)] = max_retries;
     int r = file_put_data(pw_status, p, file_get_size(pw_status));
-    flash_commit();
+    if (r == PICOKEYS_OK) {
+        flash_commit_sync(1000);
+    }
     return r;
 }
 
@@ -472,7 +474,7 @@ static int pin_wrong_retry(const file_t *pin) {
         if (r != PICOKEYS_OK) {
             return r;
         }
-        flash_commit();
+        flash_commit_sync(1000);
         if (p[(pin->fid & 0xf)] == 0) {
             return PICOKEYS_ERR_BLOCKED;
         }
