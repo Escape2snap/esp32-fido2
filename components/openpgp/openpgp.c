@@ -463,6 +463,11 @@ DBG_PRINTF("%s pin_reset_retries: pin_fid=0x%04x idx=%d old=%d -> max=%d\n",
     p[(pin->fid & 0xf)] = max_retries;
     int r = file_put_data(pw_status, p, sz);
     flash_commit();
+    DBG_PRINTF("%s pin_reset_retries: done result=%d PW_STATUS=[", DBG_TAG, r);
+    for (int _i = 0; _i < sz && _i < 16; _i++) {
+        DBG_PRINTF("%s%u", _i ? " " : "", (unsigned)p[_i]);
+    }
+    DBG_PRINTF("]\n");
     return r;
 }
 
@@ -494,8 +499,12 @@ DBG_PRINTF("%s pin_wrong_retry: file_put_data failed: %d\n", DBG_TAG, r);
             return r;
         }
         flash_commit();
-DBG_PRINTF("%s pin_wrong_retry: new_retries=%d%s\n", DBG_TAG, p[idx],
+DBG_PRINTF("%s pin_wrong_retry: new_retries=%d%s PW_STATUS=[", DBG_TAG, p[idx],
                p[idx] == 0 ? " (BLOCKED)" : "");
+        for (int _i = 0; _i < sz && _i < 16; _i++) {
+            DBG_PRINTF("%s%u", _i ? " " : "", (unsigned)p[_i]);
+        }
+        DBG_PRINTF("]\n");
         if (p[idx] == 0) {
             return PICOKEYS_ERR_BLOCKED;
         }
