@@ -56,7 +56,8 @@ int cmd_verify(void) {
     if (apdu.nc > 0) {
         return check_pin(pw, apdu.data, apdu.nc);
     }
-    uint8_t retries = *(file_get_data(pw_status) + (fid & 0xf));
+    /* DO C4 retry counters at offset 3+ per OpenPGP Card spec v3.4 §4.3.1 */
+    uint8_t retries = *(file_get_data(pw_status) + 3 + (fid & 0xf));
     if (retries == 0) {
         return SW_PIN_BLOCKED();
     }
