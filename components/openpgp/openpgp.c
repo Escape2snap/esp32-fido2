@@ -218,7 +218,10 @@ DBG_PRINTF("SigCount is empty. Initializing to zero\r\n");
         if (!ef->data || file_get_size(ef) != 7) {
             DBG_PRINTF("PW status empty/wrong size (%u). Reinitializing to default\r\n",
                        (unsigned)(ef->data ? file_get_size(ef) : 0));
-            const uint8_t def[] = { 0x1, 3, 3, 3, 0, 0, 0 };
+            /* Per OpenPGP Card spec v3.4 §4.3.1 DO C4:
+               [PW1_validity, max_PW1_len, max_RC_len, max_PW3_len,
+                PW1_retries, RC_retries, PW3_retries] */
+            const uint8_t def[] = { 0x01, 0x7F, 0x7F, 0x7F, 3, 3, 3 };
             file_put_data(ef, def, sizeof(def));
         }
     }
@@ -445,26 +448,30 @@ DBG_PRINTF("%s pin_reset_retries: pin is NULL\n", DBG_TAG);
 DBG_PRINTF("%s pin_reset_retries: pw_status=%p pw_retries=%p\n", DBG_TAG, (void*)pw_status, (void*)pw_retries);
         return PICOKEYS_ERR_FILE_NOT_FOUND;
     }
-    if ((pin->fid & 0xf) >= file_get_size(pw_status) || (pin->fid & 0xf) >= file_get_size(pw_retries)) {
-DBG_PRINTF("%s pin_reset_retries: idx out of bounds\n", DBG_TAG);
+    uint16_t sz_pw = file_get_size(pw_status);
+    uint16_t sz_ret = file_get_size(pw_retries);
+    int pw_idx = 3 + (pin->fid & 0xf);  /* PW_STATUS DO C4: retry counters start at offset 3 */
+    int ret_idx = (pin->fid & 0xf);     /* EF_PW_RETRIES: {flag, pw1_max, rc_max, pw3_max} */
+    if (pw_idx >= sz_pw || ret_idx >= sz_ret) {
+DBG_PRINTF("%s pin_reset_retries: idx out of bounds pw_idx=%d/%u ret_idx=%d/%u\n",
+                   DBG_TAG, pw_idx, (unsigned)sz_pw, ret_idx, (unsigned)sz_ret);
         return PICOKEYS_ERR_MEMORY_FATAL;
     }
     uint8_t p[64];
-    uint16_t sz = file_get_size(pw_status);
-    memcpy(p, file_get_data(pw_status), sz);
-    uint8_t retries = p[(pin->fid & 0xf)];
+    memcpy(p, file_get_data(pw_status), sz_pw);
+    uint8_t retries = p[pw_idx];
     if (retries == 0 && force == false) { //blocked
 DBG_PRINTF("%s pin_reset_retries: blocked, force=%d\n", DBG_TAG, force);
         return PICOKEYS_ERR_BLOCKED;
     }
-    uint8_t max_retries = file_get_data(pw_retries)[(pin->fid & 0xf)];
-DBG_PRINTF("%s pin_reset_retries: pin_fid=0x%04x idx=%d old=%d -> max=%d\n",
-           DBG_TAG, pin->fid, (int)(pin->fid & 0xf), retries, max_retries);
-    p[(pin->fid & 0xf)] = max_retries;
-    int r = file_put_data(pw_status, p, sz);
+    uint8_t max_retries = file_get_data(pw_retries)[ret_idx];
+DBG_PRINTF("%s pin_reset_retries: pin_fid=0x%04x pw_idx=%d ret_idx=%d old=%d -> max=%d\n",
+           DBG_TAG, pin->fid, pw_idx, ret_idx, retries, max_retries);
+    p[pw_idx] = max_retries;
+    int r = file_put_data(pw_status, p, sz_pw);
     flash_commit();
     DBG_PRINTF("%s pin_reset_retries: done result=%d PW_STATUS=[", DBG_TAG, r);
-    for (int _i = 0; _i < sz && _i < 16; _i++) {
+    for (int _i = 0; _i < sz_pw && _i < 16; _i++) {
         DBG_PRINTF("%s%u", _i ? " " : "", (unsigned)p[_i]);
     }
     DBG_PRINTF("]\n");
@@ -488,7 +495,7 @@ DBG_PRINTF("%s pin_wrong_retry: pw_status has no data\n", DBG_TAG);
     uint8_t p[64];
     uint16_t sz = file_get_size(pw_status);
     memcpy(p, file_get_data(pw_status), sz);
-    int idx = (pin->fid & 0xf);
+    int idx = 3 + (pin->fid & 0xf); /* PW_STATUS DO C4: retry counters at offset 3+ */
 DBG_PRINTF("%s pin_wrong_retry: pin_fid=0x%04x idx=%d old_val=%d pw_status_size=%u\n",
            DBG_TAG, pin->fid, idx, p[idx], (unsigned)sz);
     if (p[idx] > 0) {

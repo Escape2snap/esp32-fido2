@@ -78,8 +78,8 @@ DBG_PRINTF("%s check_pin returned 0x%04x\n", DBG_TAG, sw);
 DBG_PRINTF("%s pw_status data is NULL\n", DBG_TAG);
         return SW_REFERENCE_NOT_FOUND();
     }
-    uint8_t retries = *(pw_status_data + (fid & 0xf));
-DBG_PRINTF("%s status query: fid=0x%04x offset=%d retries=%d\n", DBG_TAG, fid, (int)(fid & 0xf), retries);
+    uint8_t retries = *(pw_status_data + 3 + (fid & 0xf)); /* DO C4: retry counters at byte 3+ */
+DBG_PRINTF("%s status query: fid=0x%04x pw_idx=%d retries=%d\n", DBG_TAG, fid, (int)(3 + (fid & 0xf)), retries);
     /* Dump all PW status bytes */
     uint16_t pwsz = file_get_size(pw_status);
     DBG_PRINTF("%s PW_STATUS_ALL: size=%u bytes=[", DBG_TAG, (unsigned)pwsz);
