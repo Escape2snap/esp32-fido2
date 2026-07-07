@@ -20,9 +20,7 @@
 #include "picokeys.h"
 #include "hwrng.h"
 #include "random.h"
-#if defined(PICO_PLATFORM)
-#include "pico/mutex.h"
-#elif defined(ESP_PLATFORM)
+#if defined(ESP_PLATFORM)
 #include "compat/esp_compat.h"
 #else
 #include "compat/queue.h"

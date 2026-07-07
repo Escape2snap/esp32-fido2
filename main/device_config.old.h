@@ -11,11 +11,11 @@
 // USB Product string
 #define DEVICE_PRODUCT       "ESP32 Key"
 
-// USB Vendor ID
-#define DEVICE_VID           0x2E8A
+// USB Vendor ID (Espressif)
+#define DEVICE_VID           0x303A
 
-// USB Product ID
-#define DEVICE_PID           0x10FF
+// USB Product ID (TinyUSB default for development)
+#define DEVICE_PID           0x0002
 
 // WebUSB URL
 #define DEVICE_URL           "github.com/Escape2snap/esp32-fido2"

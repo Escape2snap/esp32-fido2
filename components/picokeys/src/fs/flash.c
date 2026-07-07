@@ -18,7 +18,6 @@
 #include "picokeys.h"
 #include "pico_time.h"
 
-#if !defined(PICO_PLATFORM)
 #define XIP_BASE                0
 #ifdef ENABLE_EMULATION
 #define FLASH_SECTOR_SIZE       0x4000
@@ -29,10 +28,6 @@
 uint32_t FLASH_SIZE_BYTES = (1 * 1024 * 1024);
 #else
 #define FLASH_SIZE_BYTES   (8 * 1024 * 1024)
-#endif
-#else
-uint32_t FLASH_SIZE_BYTES = (2 * 1024 * 1024);
-#include "hardware/flash.h"
 #endif
 #include "file.h"
 
