@@ -16,6 +16,7 @@
  */
 
 #include <stdio.h>
+#define DBG_TAG "[DBG_fix-openpgp-pin-retry]"
 #ifdef ESP_PLATFORM
 #include "esp_compat.h"
 #define MBEDTLS_ALLOW_PRIVATE_ACCESS
@@ -432,85 +433,119 @@ int set_atr(void) {
 
 int pin_reset_retries(const file_t *pin, bool force) {
     if (!pin) {
+        printf("%s pin_reset_retries: pin is NULL\n", DBG_TAG);
         return PICOKEYS_ERR_NULL_PARAM;
     }
     file_t *pw_status = file_search_by_fid(EF_PW_PRIV, NULL, SPECIFY_EF);
     file_t *pw_retries = file_search_by_fid(EF_PW_RETRIES, NULL, SPECIFY_EF);
     if (!pw_status || !pw_retries) {
+        printf("%s pin_reset_retries: pw_status=%p pw_retries=%p\n", DBG_TAG, (void*)pw_status, (void*)pw_retries);
         return PICOKEYS_ERR_FILE_NOT_FOUND;
     }
     if ((pin->fid & 0xf) >= file_get_size(pw_status) || (pin->fid & 0xf) >= file_get_size(pw_retries)) {
+        printf("%s pin_reset_retries: idx out of bounds\n", DBG_TAG);
         return PICOKEYS_ERR_MEMORY_FATAL;
     }
     uint8_t p[64];
-    memcpy(p, file_get_data(pw_status), file_get_size(pw_status));
+    uint16_t sz = file_get_size(pw_status);
+    memcpy(p, file_get_data(pw_status), sz);
     uint8_t retries = p[(pin->fid & 0xf)];
     if (retries == 0 && force == false) { //blocked
+        printf("%s pin_reset_retries: blocked, force=%d\n", DBG_TAG, force);
         return PICOKEYS_ERR_BLOCKED;
     }
     uint8_t max_retries = file_get_data(pw_retries)[(pin->fid & 0xf)];
+    printf("%s pin_reset_retries: pin_fid=0x%04x idx=%d old=%d -> max=%d\n",
+           DBG_TAG, pin->fid, (int)(pin->fid & 0xf), retries, max_retries);
     p[(pin->fid & 0xf)] = max_retries;
-    int r = file_put_data(pw_status, p, file_get_size(pw_status));
+    int r = file_put_data(pw_status, p, sz);
     flash_commit();
     return r;
 }
 
 static int pin_wrong_retry(const file_t *pin) {
     if (!pin) {
+        printf("%s pin_wrong_retry: pin is NULL\n", DBG_TAG);
         return PICOKEYS_ERR_NULL_PARAM;
     }
     file_t *pw_status = file_search_by_fid(EF_PW_PRIV, NULL, SPECIFY_EF);
     if (!pw_status) {
+        printf("%s pin_wrong_retry: EF_PW_PRIV not found\n", DBG_TAG);
+        return PICOKEYS_ERR_FILE_NOT_FOUND;
+    }
+    if (!file_has_data(pw_status)) {
+        printf("%s pin_wrong_retry: pw_status has no data\n", DBG_TAG);
         return PICOKEYS_ERR_FILE_NOT_FOUND;
     }
     uint8_t p[64];
-    memcpy(p, file_get_data(pw_status), file_get_size(pw_status));
-    if (p[(pin->fid & 0xf)] > 0) {
-        p[(pin->fid & 0xf)] -= 1;
-        int r = file_put_data(pw_status, p, file_get_size(pw_status));
+    uint16_t sz = file_get_size(pw_status);
+    memcpy(p, file_get_data(pw_status), sz);
+    int idx = (pin->fid & 0xf);
+    printf("%s pin_wrong_retry: pin_fid=0x%04x idx=%d old_val=%d pw_status_size=%u\n",
+           DBG_TAG, pin->fid, idx, p[idx], (unsigned)sz);
+    if (p[idx] > 0) {
+        p[idx] -= 1;
+        int r = file_put_data(pw_status, p, sz);
         if (r != PICOKEYS_OK) {
+            printf("%s pin_wrong_retry: file_put_data failed: %d\n", DBG_TAG, r);
             return r;
         }
         flash_commit();
-        if (p[(pin->fid & 0xf)] == 0) {
+        printf("%s pin_wrong_retry: new_retries=%d%s\n", DBG_TAG, p[idx],
+               p[idx] == 0 ? " (BLOCKED)" : "");
+        if (p[idx] == 0) {
             return PICOKEYS_ERR_BLOCKED;
         }
-        return p[(pin->fid & 0xf)];
+        return p[idx];
     }
+    printf("%s pin_wrong_retry: already blocked (retries==0)\n", DBG_TAG);
     return PICOKEYS_ERR_BLOCKED;
 }
 
 int check_pin(const file_t *pin, const uint8_t *data, size_t len) {
     if (!file_has_data(pin)) {
+        printf("%s check_pin: pin file has no data\n", DBG_TAG);
         return SW_REFERENCE_NOT_FOUND();
     }
     isUserAuthenticated = false;
-    //has_pw1 = has_pw3 = false;
 
     uint8_t dhash[32], off = 2;
-    if (file_get_size(pin) == 33) {
+    uint16_t pin_fsize = file_get_size(pin);
+    printf("%s check_pin: pin_fid=0x%04x file_size=%u len=%zu\n",
+           DBG_TAG, pin->fid, (unsigned)pin_fsize, len);
+    if (pin_fsize == 33) {
         off = 1;
         double_hash_pin(data, len, dhash);
+        printf("%s check_pin: legacy format (off=1)\n", DBG_TAG);
     }
     else {
         pin_derive_verifier(data, len, dhash);
+        printf("%s check_pin: new format (off=2)\n", DBG_TAG);
     }
-    if (sizeof(dhash) != file_get_size(pin) - off) { //1 byte for pin len and 1 byte for format
+    if (sizeof(dhash) != pin_fsize - off) {
+        printf("%s check_pin: SIZE MISMATCH 32 != %u-%d=%d -> SW_CONDITIONS_NOT_SATISFIED\n",
+               DBG_TAG, (unsigned)pin_fsize, off, (int)(pin_fsize - off));
         return SW_CONDITIONS_NOT_SATISFIED();
     }
     if (memcmp(file_get_data(pin) + off, dhash, sizeof(dhash)) != 0) {
+        printf("%s check_pin: PIN WRONG\n", DBG_TAG);
         int retries;
         if ((retries = pin_wrong_retry(pin)) < PICOKEYS_OK) {
+            printf("%s check_pin: pin_wrong_retry returned BLOCKED (%d)\n", DBG_TAG, retries);
             return SW_PIN_BLOCKED();
         }
+        printf("%s check_pin: returning 0x63C0|%d = 0x63%02x\n", DBG_TAG, retries, 0xc0 | retries);
         return set_res_sw(0x63, 0xc0 | retries);
     }
 
+    printf("%s check_pin: PIN CORRECT, resetting retries\n", DBG_TAG);
     int r = pin_reset_retries(pin, false);
     if (r == PICOKEYS_ERR_BLOCKED) {
+        printf("%s check_pin: pin_reset_retries says BLOCKED (retries==0)\n", DBG_TAG);
         return SW_PIN_BLOCKED();
     }
     if (r != PICOKEYS_OK) {
+        printf("%s check_pin: pin_reset_retries failed: %d\n", DBG_TAG, r);
         return SW_MEMORY_FAILURE();
     }
     if (off == 1) {
@@ -591,11 +626,14 @@ int check_pin(const file_t *pin, const uint8_t *data, size_t len) {
             has_pw2 = true;
         }
         pin_derive_session(data, len, session_pw1);
+        printf("%s check_pin: PW1 authenticated (has_pw1=%d has_pw2=%d)\n", DBG_TAG, has_pw1, has_pw2);
     }
     else if (pin->fid == EF_PW3) {
         has_pw3 = true;
         pin_derive_session(data, len, session_pw3);
+        printf("%s check_pin: PW3 authenticated\n", DBG_TAG);
     }
+    printf("%s check_pin: SUCCESS -> SW_OK\n", DBG_TAG);
     return SW_OK();
 }
 
