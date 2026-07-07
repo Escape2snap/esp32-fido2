@@ -216,7 +216,7 @@ void scan_files_openpgp(void) {
     if ((ef = file_search_by_fid(EF_PW_PRIV, NULL, SPECIFY_ANY))) {
         if (!ef->data) {
             printf("PW status is empty. Initializing to default\r\n");
-            const uint8_t def[] = { 0x1, 127, 127, 127, 3, 3, 3 };
+            const uint8_t def[] = { 0x1, 3, 3, 3, 0, 0, 0 };
             file_put_data(ef, def, sizeof(def));
         }
     }
@@ -440,17 +440,17 @@ int pin_reset_retries(const file_t *pin, bool force) {
     if (!pw_status || !pw_retries) {
         return PICOKEYS_ERR_FILE_NOT_FOUND;
     }
-    if (3 + (pin->fid & 0xf) >= file_get_size(pw_status) || (pin->fid & 0xf) >= file_get_size(pw_retries)) {
+    if ((pin->fid & 0xf) >= file_get_size(pw_status) || (pin->fid & 0xf) >= file_get_size(pw_retries)) {
         return PICOKEYS_ERR_MEMORY_FATAL;
     }
     uint8_t p[64];
     memcpy(p, file_get_data(pw_status), file_get_size(pw_status));
-    uint8_t retries = p[3 + (pin->fid & 0xf)];
+    uint8_t retries = p[(pin->fid & 0xf)];
     if (retries == 0 && force == false) { //blocked
         return PICOKEYS_ERR_BLOCKED;
     }
     uint8_t max_retries = file_get_data(pw_retries)[(pin->fid & 0xf)];
-    p[3 + (pin->fid & 0xf)] = max_retries;
+    p[(pin->fid & 0xf)] = max_retries;
     int r = file_put_data(pw_status, p, file_get_size(pw_status));
     flash_commit();
     return r;
@@ -466,17 +466,17 @@ static int pin_wrong_retry(const file_t *pin) {
     }
     uint8_t p[64];
     memcpy(p, file_get_data(pw_status), file_get_size(pw_status));
-    if (p[3 + (pin->fid & 0xf)] > 0) {
-        p[3 + (pin->fid & 0xf)] -= 1;
+    if (p[(pin->fid & 0xf)] > 0) {
+        p[(pin->fid & 0xf)] -= 1;
         int r = file_put_data(pw_status, p, file_get_size(pw_status));
         if (r != PICOKEYS_OK) {
             return r;
         }
         flash_commit();
-        if (p[3 + (pin->fid & 0xf)] == 0) {
+        if (p[(pin->fid & 0xf)] == 0) {
             return PICOKEYS_ERR_BLOCKED;
         }
-        return p[3 + (pin->fid & 0xf)];
+        return p[(pin->fid & 0xf)];
     }
     return PICOKEYS_ERR_BLOCKED;
 }
