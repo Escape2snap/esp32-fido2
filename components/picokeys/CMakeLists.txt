@@ -57,8 +57,6 @@ idf_component_register(
 idf_component_set_property(${COMPONENT_NAME} WHOLE_ARCHIVE ON)
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
-    USB_VID=0x2E8A
-    USB_PID=0x10FF
     USB_ITF_HID=1
     DEBUG_APDU=0
 )
