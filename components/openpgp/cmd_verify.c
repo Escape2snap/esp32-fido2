@@ -16,6 +16,7 @@
  */
 
 #include <stdio.h>
+#include <inttypes.h>
 #include "openpgp.h"
 
 #define DBG_TAG "[DBG_fix-openpgp-pin-retry]"
@@ -24,7 +25,7 @@ int cmd_verify(void) {
     uint8_t p1 = P1(apdu);
     uint8_t p2 = P2(apdu);
 
-    printf("%s cmd_verify p1=0x%02x p2=0x%02x nc=%d\n", DBG_TAG, p1, p2, apdu.nc);
+    printf("%s cmd_verify p1=0x%02x p2=0x%02x nc=%" PRIu32 "\n", DBG_TAG, p1, p2, apdu.nc);
 
     if (p1 == 0xFF) {
         if (apdu.nc != 0) {
@@ -66,7 +67,7 @@ int cmd_verify(void) {
         return SW_REFERENCE_NOT_FOUND();
     }
     if (apdu.nc > 0) {
-        printf("%s calling check_pin(fid=0x%04x, data_len=%d)\n", DBG_TAG, fid, apdu.nc);
+        printf("%s calling check_pin(fid=0x%04x, data_len=%" PRIu32 ")\n", DBG_TAG, fid, apdu.nc);
         uint16_t sw = check_pin(pw, apdu.data, apdu.nc);
         printf("%s check_pin returned 0x%04x\n", DBG_TAG, sw);
         return sw;
