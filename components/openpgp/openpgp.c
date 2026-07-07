@@ -215,8 +215,9 @@ DBG_PRINTF("SigCount is empty. Initializing to zero\r\n");
         }
     }
     if ((ef = file_search_by_fid(EF_PW_PRIV, NULL, SPECIFY_ANY))) {
-        if (!ef->data) {
-DBG_PRINTF("PW status is empty. Initializing to default\r\n");
+        if (!ef->data || file_get_size(ef) != 7) {
+            DBG_PRINTF("PW status empty/wrong size (%u). Reinitializing to default\r\n",
+                       (unsigned)(ef->data ? file_get_size(ef) : 0));
             const uint8_t def[] = { 0x1, 3, 3, 3, 0, 0, 0 };
             file_put_data(ef, def, sizeof(def));
         }
@@ -257,8 +258,9 @@ DBG_PRINTF("Sex is empty. Initializing to default\r\n");
         }
     }
     if ((ef = file_search_by_fid(EF_PW_RETRIES, NULL, SPECIFY_ANY))) {
-        if (!ef->data) {
-DBG_PRINTF("PW retries is empty. Initializing to default\r\n");
+        if (!ef->data || file_get_size(ef) != 4) {
+DBG_PRINTF("PW retries empty/wrong size (%u). Reinitializing to default\r\n",
+                       (unsigned)(ef->data ? file_get_size(ef) : 0));
             const uint8_t def[] = { 0x1, 3, 3, 3 };
             file_put_data(ef, def, sizeof(def));
         }
