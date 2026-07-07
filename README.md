@@ -10,6 +10,8 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 
 > Standalone ESP-IDF project optimized for **ESP32-S3 N16R8**.
 > No Raspberry Pi Pico or cross-platform logic.
+>
+> **Hardware acceleration:** NIST curve ECDSA/ECDH/RSA operations use ESP32-S3's onboard ECC + MPI hardware accelerators via mbedTLS (`sdkconfig.defaults`).
 
 ---
 
@@ -327,6 +329,7 @@ in an infinite loop.
 | SHA | `CONFIG_MBEDTLS_HARDWARE_SHA=y` |
 | ECC | `CONFIG_MBEDTLS_HARDWARE_ECC=y` |
 | GCM | `CONFIG_MBEDTLS_HARDWARE_GCM=y` |
+| MPI (big-number) | `CONFIG_MBEDTLS_HARDWARE_MPI=y` |
 
 ### Interface Mode
 
@@ -397,16 +400,24 @@ test:     testing
 ### Key Hierarchy
 
 ```
-OTP/eFuse (chip-internal, unreadable)
-  └── Master Key Encryption Key (MKEK)
-        └── AES/GCM/ChaCha20-Poly1305
-              └── Encrypted private keys → Flash storage
+[Optional] External OTP key (e.g., Nitrokey OTP app, provisioned at runtime)
+  └── If absent, falls back to constant "NO-OTP" salt
+
+ESP32-S3 unique chip serial (exposed via USB management commands)
+  └── HKDF-SHA256(otp_key or "NO-OTP", chip_serial, "DEVICE/ROOT")
+        └── Device Master Key (keydev) — encrypted in Flash
+              └── AES-GCM/ChaCha20-Poly1305
+                    └── Encrypted private keys → Flash storage
 ```
 
-All private key material is **encrypted at rest** using a master key stored in
-the ESP32-S3's **OTP/eFuse** memory. eFuse is one-time programmable and
-physically inaccessible from outside the chip — even with physical flash
-readout, private keys cannot be recovered.
+All private key material is **encrypted at rest** using a key hierarchy rooted
+in the chip's serial number. The optional OTP key adds entropy when provisioned.
+
+> **⚠️ Without an OTP key**, the root derivation depends solely on the chip
+> serial number (obtainable via USB). Physical flash readout + serial number
+> is sufficient to offline-brute-force all keys. See
+> [`esp32-fido2-problem`](https://github.com/Escape2snap/esp32-fido2-problem)
+> for the full security analysis.
 
 ### Key Derivation
 

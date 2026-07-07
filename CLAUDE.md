@@ -274,9 +274,9 @@ test:     testing
 
 ## Claude Rules
 
-- **No `git push --force`.** Normal `git push` only.
-- **No unsigned commits.** Always commit with `-s` (Signed-off-by).
-- **On timeout, stop and wait for the user.** Never skip, retry, or work around.
+- **No force commands.** Never use `--force` or `-f` with any command (git push, git reset, git checkout, rm, etc.). Normal operations only.
+- **Every commit must be signed.** Always commit with `-s` (Signed-off-by). Unsigned commits are never acceptable.
+- **On timeout, stop and ask the user.** Never skip, retry, work around, or proceed silently. Wait for explicit instruction.
 - **No `gh` CLI for PRs.** Use plain `git` for everything.
 - **English commit messages** matching the convention above.
 - **Worktree isolation** — always use `EnterWorktree` before editing files.
