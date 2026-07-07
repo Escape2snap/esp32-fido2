@@ -8,7 +8,7 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 - **OpenPGP card v3.4** — GnuPG, SSH, S/MIME, smartcard operations ✅
 - **OATH / OTP** *(in progress)* — TOTP/HOTP, Yubico OTP 🚧
 
-> Standalone ESP-IDF project optimized for **ESP32-S3 N16R8**.
+> Standalone ESP-IDF project optimized for **ESP32-S3**.
 > No Raspberry Pi Pico or cross-platform logic.
 >
 > **Hardware acceleration:** NIST curve ECDSA/ECDH/RSA operations use ESP32-S3's onboard ECC + MPI hardware accelerators via mbedTLS (`sdkconfig.defaults`).
@@ -36,16 +36,24 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 
 | Feature | Status |
 |---------|--------|
-| OpenPGP card v3.4 | ✅ |
+| OpenPGP card v3.4 (ISO 7816-4) | ✅ |
 | 3 key slots (SIG, DEC, AUT) | ✅ |
 | RSA 2048/3072/4096 | ✅ |
 | ECDSA (P-256, P-384, P-521, secp256k1) | ✅ |
 | Brainpool (256r1, 384r1, 512r1) | ✅ |
 | Curve25519 (X25519 ECDH) | ✅ |
-| Ed25519 (EdDSA) | ✅ |
+| Ed25519 (EdDSA, feat/ed25519) | 🚧 |
 | On-device key generation | ✅ |
-| Key import/export | ✅ |
-| PIN & Admin PIN protection | ✅ |
+| Key import/export (PUT DATA, IMPORT DATA) | ✅ |
+| PIN & Admin PIN (PW1/PW3) verification | ✅ |
+| Reset Code (RC) & RESET RETRY | ✅ |
+| Change PIN | ✅ |
+| PW Status Byte (DO C4) | ✅ |
+| KDF (Key Derivation Function) | ✅ |
+| Signature counter | ✅ |
+| Challenge-response (GET CHALLENGE) | ✅ |
+| Internal authentication | ✅ |
+| PSO (Compute Digital Signature, Decipher) | ✅ |
 | GnuPG / SSH / S/MIME compatible | ✅ |
 
 ### Default Algorithm
@@ -93,9 +101,10 @@ idf.py build
 |------|---------|
 | Chip | ESP32-S3 (Xtensa dual-core 240MHz) |
 | Flash | 16MB (Quad SPI QIO) |
-| PSRAM | 8MB (Octal PSRAM, optional) |
+| PSRAM | 8MB+ Octal (unused) |
 | LED | NeoPixel WS2812 (GPIO48, dimmed ~20%) |
 | USB | CCID (smartcard) + HID (FIDO2 CTAP) |
+| HW Accelerators | AES, SHA, ECC (NIST curves), MPI (big-number) |
 
 ---
 
@@ -146,6 +155,16 @@ sudo usermod -a -G dialout $USER
 
 ### OpenPGP (GnuPG)
 
+Default PINs (set in `components/openpgp/openpgp.c`):
+
+| Password | Default | Used for |
+|----------|---------|---------|
+| PW1 (user PIN) | `123456` | Signing, decryption, authentication |
+| RC (Reset Code) | `12345678` | Unblock PW1 when forgotten |
+| PW3 (admin PIN) | `12345678` | Admin operations, key management, PW1/PW3 change |
+
+Change all three during first-time setup with `gpg --edit-card` → `passwd`.
+
 ```bash
 # Check card
 gpg --card-status
@@ -166,11 +185,22 @@ gpg/card> generate
 > gpg/card> generate
 > ```
 > This only needs to be done once per fresh card.
+>
+> **PIN retry counter:** After flashing new firmware, existing devices may
+> have stale `EF_PW_PRIV` data. The firmware auto-detects and corrects this
+> on boot (reports `PW status empty/wrong size`). A single correct PIN entry
+> after boot will initialize the correct retry counters.
 
 ### FIDO2 / WebAuthn
 
-```
-Open https://webauthn.io in your browser and register.
+```bash
+# Check device info (make sure FIDO2 is alive)
+python3 -c "from fido2.hid import CtapHidDevice; \
+  d = next(CtapHidDevice.list_devices()); \
+  print(d.get_info())"
+
+# Browser test: https://webauthn.io
+
 ```
 
 **User Presence:** Press the **BOOT button** (GPIO0) on the board when
@@ -198,97 +228,6 @@ for dev in CtapHidDevice.list_devices():
 "
 ```
 
-### Verifying Ed25519 Public Key Format (opensc-tool)
-
-The Ed25519 public key is exchanged as a raw 32-byte little-endian encoding
-(Y-coordinate with sign bit of X at bit 255, per RFC 8032).  This can be
-verified with `opensc-tool`:
-
-```cmd
-opensc-tool -r 0 -s 00:47:81:00:02:B6:00:00
-
-Received (SW1=0x90, SW2=0x00):
-7F 49 22 86 20 <32-byte raw public key>    ← DO 86 with 32 bytes, no prefix
-```
-
-The `86 20` tag confirms a 32-byte naked public key — no leading `00` or `04`
-prefix that would indicate a different encoding.  This matches the OpenPGP card
-v3.4 specification for EdDSA.
-
-### Verifying Ed25519 Keys (Debug Mode)
-
-When CONFIG_DEBUG_APDU_HEX is enabled, the firmware prints the raw key
-material to serial during Ed25519 key generation:
-
-```
-[dbg] Ed25519 seed:          <32-byte hex — the private key seed>
-[dbg] Ed25519 Q.x (LE):     <32-byte hex — public key x (little-endian)>
-[dbg] Ed25519 Q.y (LE):     <32-byte hex — public key y (little-endian)>
-[dbg] make_ecdsa Ed25519... <32-byte hex — RFC 8032 encoded public key>
-[dbg] make_ecdsa final APDU <full 7F 49 response including SW>
-```
-
-To verify that the card computed the correct public key:
-
-1. Extract the seed hex from the serial output (first `[dbg] Ed25519 seed:` line)
-2. Compute the expected public key with Python:
-
-```python
-import hashlib
-
-seed = bytes.fromhex("<paste seed hex here>")
-# SHA-512(seed), clamp
-h = hashlib.sha512(seed).digest()
-scalar = bytearray(h[:32])
-scalar[0] &= 248; scalar[31] &= 63; scalar[31] |= 64
-
-# The clamped scalar is used for EC point multiplication s * B
-# (requires an Ed25519 library like nacl or cryptography)
-```
-
-Or extract the GPG public key for comparison:
-
-```bash
-gpg --export --export-options export-minimal --armor <KEYID> | gpg --list-packets
-```
-
-The serial output `[dbg] Ed25519 Q.y (LE)` should match the y-coordinate
-in the GPG public key packet.
-
----
-
-## Debug Mode
-
-Debug output (Ed25519 seed, public key, APDU hex dumps) is **built into
-the `feat/ed25519` branch**.  Enable via `idf.py menuconfig` → **Debug
-Mode**:
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `DEBUG_ENABLE` | n | Master switch |
-| `DEBUG_APDU_HEX` | y¹ | Hex dump APDUs + Ed25519 key material |
-| `DEBUG_PERF` | y¹ | Timing markers for key derivation, signing, flash |
-| `DEBUG_STACK` | n | Periodic free-stack report for core0_loop |
-| `DEBUG_WDT_FEED` | n | `esp_task_wdt_reset()` inside long-running loops |
-| `DEBUG_WDT_FEED_INTERVAL_MS` | 500 | WDT feed interval (100–5000 ms) |
-
-¹ *Only visible when `DEBUG_ENABLE` is set.*
-
-### Console Output (example)
-
-```
-[perf] derive_key: 15234 us
-[perf] credential_create: 8912 us
-[stack] core0: 2048 bytes free
-[fido-req] 90010A4700...
-[fido-resp] 00...
-```
-
-When `DEBUG_WDT_FEED` is enabled, the hardware watchdog is
-automatically reset during long crypto operations (HKDF chains,
-Ed25519 scalar multiplication) at the configured interval, preventing
-watchdog-triggered reboots during operations that take > 10 s.
-
 ---
 
 ## Platform Notes
@@ -310,23 +249,38 @@ A 100ms startup delay is built into the firmware to minimize this.
   or Curve 25519 instead.
 - **GPG key-attr:** On first key generation with default P-384, GPG on Windows
   may report `Zero prefix in S-expression`. Run `key-attr` once before
-  `generate` to initialize the algorithm attributes.  
+  `generate` to initialize the algorithm attributes.
 - **CCID+HID coexistence:** Windows `usbccgp.sys` handles CCID and HID
   interfaces better on reboot. If the smartcard reader doesn't appear,
   reconnect the device.
-- **Ed25519 key generation is slow (~8 s):** The dedicated fe25519 field
-  arithmetic (components/eddsa/) is ~100× faster than generic mbedTLS bignum,
-  but still slower than the HW ECC accelerator (which doesn't support
-  Edwards curves).  CCID timeout was increased to 10 s to accommodate this.
+- **P-384 key generation is slow:** On ESP32-S3, P-384 ECDSA/ECDH key
+  generation using software mbedtls_mpi can take 10+ seconds. The Task
+  WDT will trigger but the operation completes. Stick to P-256 or Ed25519
+  (feat/ed25519) for faster key generation.
+- **Ed25519/Curve25519 (feat/ed25519):** Work in progress. Ed25519 signing
+  works but the 8-second scalar multiplication exceeds PC/SC timeouts
+  in GPG. X25519 ECDH key generation needs completion. See the
+  `feat/ed25519` branch for details.
 
-- **FIDO first-connection RX error:** On first USB enumeration (fresh flash
-  or power cycle), the host may report `FIDO err rx`.  A second connection
-  attempt works reliably.  Likely a host-side timing race with TinyUSB
-  enumeration.
->>>>>>> 56fcdb6 (docs: add FIDO first-connection RX note to readme)
 ---
 
 ## Fix History
+
+### PR #37 — PIN Retry Counter Not Decrementing
+`files.c:138-139`, `cmd_verify.c:59`, `openpgp.c:217-222,448-465,474-492` — PW_STATUS DO C4 byte layout fix
+
+**Root cause:** `EF_PW_PRIV` (PW_STATUS DO C4) byte layout did not match
+[OpenPGP Card spec v3.4 §4.3.1](https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.pdf).
+The spec defines 7 bytes as `[PW1_validity, max_PW1_len, max_RC_len, max_PW3_len,
+PW1_retries, RC_retries, PW3_retries]`, but the code used
+`{0x01, 3, 3, 3, 0, 0, 0}` — treating bytes 1–3 as retry counters and
+leaving bytes 4–6 (actual retry counters) at 0. This caused `gpg --card-status`
+to show `PIN retry counter: 0 0 0` while still "working" by decrementing
+the max-length fields instead.
+
+**Effect:** All three passwords were blocked from the first boot. The card
+appeared to accept unlimited wrong PINs because the retry counters at bytes 4–6
+were never decremented. gpg correctly read bytes 4–6 and reported all 0s.
 
 ### PR #33 — CBOR COSE Algorithm Encoding Fix
 `cbor.c:165,232` — `-(alg+1)` → `-alg`
@@ -405,6 +359,7 @@ in an infinite loop.
 | SELECT DATA buffer over-read | `cmd_select_data.c:25-27` | Added `apdu.nc < 1` check |
 | ECDH kdata overflow | `cmd_pso.c:167-169` | Added `key_size > sizeof(kdata)` check |
 | is_gpg not reset | `openpgp.c:411` | Set `is_gpg = true` on select |
+
 ---
 
 ## Build Configuration
@@ -447,10 +402,10 @@ esp32-fido2/
 │   ├── device_config.h        ← gitignored, your custom identity
 │   └── device_config.old.h    ← template, tracked in git
 ├── components/
-│   ├── picokeys/        # Core SDK (USB, FS, LED, RNG...)
-│   ├── openpgp/         # OpenPGP smartcard v3.4
-│   ├── fido/            # FIDO2 / CTAP 2.1 / U2F
-│   └── tinycbor/        # CBOR library
+│   ├── picokeys/        # Core SDK: USB (CCID/HID), flash FS, LED, RNG, crypto
+│   ├── openpgp/         # OpenPGP card v3.4: APDU commands, key management, PSO
+│   ├── fido/            # FIDO2 / CTAP 2.1: makeCredential, getAssertion, PIN/UV
+│   └── tinycbor/        # CBOR encode/decode (third-party)
 └── managed_components/  # TinyUSB, NeoPixel
 ```
 
@@ -480,6 +435,10 @@ refactor: code restructuring
 perf:     performance optimization
 test:     testing
 ```
+
+Scope goes **after the colon with a space**, not in parentheses:
+- ✅ `fix: openpgp correct PW_STATUS byte layout`
+- ❌ `fix(openpgp): correct PW_STATUS byte layout`
 
 ---
 
