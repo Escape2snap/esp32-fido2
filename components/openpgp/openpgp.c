@@ -17,6 +17,7 @@
 
 #include <stdio.h>
 #define DBG_TAG "[DBG_fix-openpgp-pin-retry]"
+#define DBG_PRINTF(...) do { printf(__VA_ARGS__); fflush(stdout); } while(0)
 #ifdef ESP_PLATFORM
 #include "esp_compat.h"
 #define MBEDTLS_ALLOW_PRIVATE_ACCESS
@@ -111,7 +112,7 @@ void scan_files_openpgp(void) {
     bool bootstrap_legacy = false;
     file_t *ef_dek = file_search_by_fid(EF_DEK, NULL, SPECIFY_ANY), *ef_dek_pw1 = file_search_by_fid(EF_DEK_PW1, NULL, SPECIFY_ANY), *ef_dek_rc = file_search_by_fid(EF_DEK_RC, NULL, SPECIFY_ANY), *ef_dek_pw3 = file_search_by_fid(EF_DEK_PW3, NULL, SPECIFY_ANY);
     if (!file_has_data(ef_dek_pw1) && !file_has_data(ef_dek_rc) && !file_has_data(ef_dek_pw3) && !file_has_data(ef_dek)) {
-        printf("DEK are empty\r\n");
+DBG_PRINTF("DEK are empty\r\n");
         const uint8_t *random_dek = random_bytes_get(DEK_SIZE);
         const uint8_t def1[6] = {0x31, 0x32, 0x33, 0x34, 0x35, 0x36};
         const uint8_t def3[8] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 };
@@ -152,7 +153,7 @@ void scan_files_openpgp(void) {
     }
     if ((ef = file_search_by_fid(EF_PW1, NULL, SPECIFY_ANY))) {
         if (!ef->data || reset_dek) {
-            printf("PW1 is empty. Initializing with default password\r\n");
+DBG_PRINTF("PW1 is empty. Initializing with default password\r\n");
             const uint8_t def[6] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36 };
             uint8_t dhash[34];
             if (bootstrap_legacy) {
@@ -170,7 +171,7 @@ void scan_files_openpgp(void) {
     }
     if ((ef = file_search_by_fid(EF_RC, NULL, SPECIFY_ANY))) {
         if (!ef->data || reset_dek) {
-            printf("RC is empty. Initializing with default password\r\n");
+DBG_PRINTF("RC is empty. Initializing with default password\r\n");
 
             const uint8_t def[8] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 };
             uint8_t dhash[34];
@@ -189,7 +190,7 @@ void scan_files_openpgp(void) {
     }
     if ((ef = file_search_by_fid(EF_PW3, NULL, SPECIFY_ANY))) {
         if (!ef->data || reset_dek) {
-            printf("PW3 is empty. Initializing with default password\r\n");
+DBG_PRINTF("PW3 is empty. Initializing with default password\r\n");
 
             const uint8_t def[8] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 };
             uint8_t dhash[34];
@@ -208,56 +209,56 @@ void scan_files_openpgp(void) {
     }
     if ((ef = file_search_by_fid(EF_SIG_COUNT, NULL, SPECIFY_ANY))) {
         if (!ef->data) {
-            printf("SigCount is empty. Initializing to zero\r\n");
+DBG_PRINTF("SigCount is empty. Initializing to zero\r\n");
             const uint8_t def[3] = { 0 };
             file_put_data(ef, def, sizeof(def));
         }
     }
     if ((ef = file_search_by_fid(EF_PW_PRIV, NULL, SPECIFY_ANY))) {
         if (!ef->data) {
-            printf("PW status is empty. Initializing to default\r\n");
+DBG_PRINTF("PW status is empty. Initializing to default\r\n");
             const uint8_t def[] = { 0x1, 3, 3, 3, 0, 0, 0 };
             file_put_data(ef, def, sizeof(def));
         }
     }
     if ((ef = file_search_by_fid(EF_UIF_SIG, NULL, SPECIFY_ANY))) {
         if (!ef->data) {
-            printf("UIF SIG is empty. Initializing to default\r\n");
+DBG_PRINTF("UIF SIG is empty. Initializing to default\r\n");
             const uint8_t def[] = { 0x0, 0x20 };
             file_put_data(ef, def, sizeof(def));
         }
     }
     if ((ef = file_search_by_fid(EF_UIF_DEC, NULL, SPECIFY_ANY))) {
         if (!ef->data) {
-            printf("UIF DEC is empty. Initializing to default\r\n");
+DBG_PRINTF("UIF DEC is empty. Initializing to default\r\n");
             const uint8_t def[] = { 0x0, 0x20 };
             file_put_data(ef, def, sizeof(def));
         }
     }
     if ((ef = file_search_by_fid(EF_UIF_AUT, NULL, SPECIFY_ANY))) {
         if (!ef->data) {
-            printf("UIF AUT is empty. Initializing to default\r\n");
+DBG_PRINTF("UIF AUT is empty. Initializing to default\r\n");
             const uint8_t def[] = { 0x0, 0x20 };
             file_put_data(ef, def, sizeof(def));
         }
     }
     if ((ef = file_search_by_fid(EF_KDF, NULL, SPECIFY_ANY))) {
         if (!ef->data) {
-            printf("KDF is empty. Initializing to default\r\n");
+DBG_PRINTF("KDF is empty. Initializing to default\r\n");
             const uint8_t def[] = { 0x81, 0x1, 0x0 };
             file_put_data(ef, def, sizeof(def));
         }
     }
     if ((ef = file_search_by_fid(EF_SEX, NULL, SPECIFY_ANY))) {
         if (!ef->data) {
-            printf("Sex is empty. Initializing to default\r\n");
+DBG_PRINTF("Sex is empty. Initializing to default\r\n");
             const uint8_t def[] = { 0x30 };
             file_put_data(ef, def, sizeof(def));
         }
     }
     if ((ef = file_search_by_fid(EF_PW_RETRIES, NULL, SPECIFY_ANY))) {
         if (!ef->data) {
-            printf("PW retries is empty. Initializing to default\r\n");
+DBG_PRINTF("PW retries is empty. Initializing to default\r\n");
             const uint8_t def[] = { 0x1, 3, 3, 3 };
             file_put_data(ef, def, sizeof(def));
         }
@@ -433,17 +434,17 @@ int set_atr(void) {
 
 int pin_reset_retries(const file_t *pin, bool force) {
     if (!pin) {
-        printf("%s pin_reset_retries: pin is NULL\n", DBG_TAG);
+DBG_PRINTF("%s pin_reset_retries: pin is NULL\n", DBG_TAG);
         return PICOKEYS_ERR_NULL_PARAM;
     }
     file_t *pw_status = file_search_by_fid(EF_PW_PRIV, NULL, SPECIFY_EF);
     file_t *pw_retries = file_search_by_fid(EF_PW_RETRIES, NULL, SPECIFY_EF);
     if (!pw_status || !pw_retries) {
-        printf("%s pin_reset_retries: pw_status=%p pw_retries=%p\n", DBG_TAG, (void*)pw_status, (void*)pw_retries);
+DBG_PRINTF("%s pin_reset_retries: pw_status=%p pw_retries=%p\n", DBG_TAG, (void*)pw_status, (void*)pw_retries);
         return PICOKEYS_ERR_FILE_NOT_FOUND;
     }
     if ((pin->fid & 0xf) >= file_get_size(pw_status) || (pin->fid & 0xf) >= file_get_size(pw_retries)) {
-        printf("%s pin_reset_retries: idx out of bounds\n", DBG_TAG);
+DBG_PRINTF("%s pin_reset_retries: idx out of bounds\n", DBG_TAG);
         return PICOKEYS_ERR_MEMORY_FATAL;
     }
     uint8_t p[64];
@@ -451,11 +452,11 @@ int pin_reset_retries(const file_t *pin, bool force) {
     memcpy(p, file_get_data(pw_status), sz);
     uint8_t retries = p[(pin->fid & 0xf)];
     if (retries == 0 && force == false) { //blocked
-        printf("%s pin_reset_retries: blocked, force=%d\n", DBG_TAG, force);
+DBG_PRINTF("%s pin_reset_retries: blocked, force=%d\n", DBG_TAG, force);
         return PICOKEYS_ERR_BLOCKED;
     }
     uint8_t max_retries = file_get_data(pw_retries)[(pin->fid & 0xf)];
-    printf("%s pin_reset_retries: pin_fid=0x%04x idx=%d old=%d -> max=%d\n",
+DBG_PRINTF("%s pin_reset_retries: pin_fid=0x%04x idx=%d old=%d -> max=%d\n",
            DBG_TAG, pin->fid, (int)(pin->fid & 0xf), retries, max_retries);
     p[(pin->fid & 0xf)] = max_retries;
     int r = file_put_data(pw_status, p, sz);
@@ -465,87 +466,87 @@ int pin_reset_retries(const file_t *pin, bool force) {
 
 static int pin_wrong_retry(const file_t *pin) {
     if (!pin) {
-        printf("%s pin_wrong_retry: pin is NULL\n", DBG_TAG);
+DBG_PRINTF("%s pin_wrong_retry: pin is NULL\n", DBG_TAG);
         return PICOKEYS_ERR_NULL_PARAM;
     }
     file_t *pw_status = file_search_by_fid(EF_PW_PRIV, NULL, SPECIFY_EF);
     if (!pw_status) {
-        printf("%s pin_wrong_retry: EF_PW_PRIV not found\n", DBG_TAG);
+DBG_PRINTF("%s pin_wrong_retry: EF_PW_PRIV not found\n", DBG_TAG);
         return PICOKEYS_ERR_FILE_NOT_FOUND;
     }
     if (!file_has_data(pw_status)) {
-        printf("%s pin_wrong_retry: pw_status has no data\n", DBG_TAG);
+DBG_PRINTF("%s pin_wrong_retry: pw_status has no data\n", DBG_TAG);
         return PICOKEYS_ERR_FILE_NOT_FOUND;
     }
     uint8_t p[64];
     uint16_t sz = file_get_size(pw_status);
     memcpy(p, file_get_data(pw_status), sz);
     int idx = (pin->fid & 0xf);
-    printf("%s pin_wrong_retry: pin_fid=0x%04x idx=%d old_val=%d pw_status_size=%u\n",
+DBG_PRINTF("%s pin_wrong_retry: pin_fid=0x%04x idx=%d old_val=%d pw_status_size=%u\n",
            DBG_TAG, pin->fid, idx, p[idx], (unsigned)sz);
     if (p[idx] > 0) {
         p[idx] -= 1;
         int r = file_put_data(pw_status, p, sz);
         if (r != PICOKEYS_OK) {
-            printf("%s pin_wrong_retry: file_put_data failed: %d\n", DBG_TAG, r);
+DBG_PRINTF("%s pin_wrong_retry: file_put_data failed: %d\n", DBG_TAG, r);
             return r;
         }
         flash_commit();
-        printf("%s pin_wrong_retry: new_retries=%d%s\n", DBG_TAG, p[idx],
+DBG_PRINTF("%s pin_wrong_retry: new_retries=%d%s\n", DBG_TAG, p[idx],
                p[idx] == 0 ? " (BLOCKED)" : "");
         if (p[idx] == 0) {
             return PICOKEYS_ERR_BLOCKED;
         }
         return p[idx];
     }
-    printf("%s pin_wrong_retry: already blocked (retries==0)\n", DBG_TAG);
+DBG_PRINTF("%s pin_wrong_retry: already blocked (retries==0)\n", DBG_TAG);
     return PICOKEYS_ERR_BLOCKED;
 }
 
 int check_pin(const file_t *pin, const uint8_t *data, size_t len) {
     if (!file_has_data(pin)) {
-        printf("%s check_pin: pin file has no data\n", DBG_TAG);
+DBG_PRINTF("%s check_pin: pin file has no data\n", DBG_TAG);
         return SW_REFERENCE_NOT_FOUND();
     }
     isUserAuthenticated = false;
 
     uint8_t dhash[32], off = 2;
     uint16_t pin_fsize = file_get_size(pin);
-    printf("%s check_pin: pin_fid=0x%04x file_size=%u len=%zu\n",
+DBG_PRINTF("%s check_pin: pin_fid=0x%04x file_size=%u len=%zu\n",
            DBG_TAG, pin->fid, (unsigned)pin_fsize, len);
     if (pin_fsize == 33) {
         off = 1;
         double_hash_pin(data, len, dhash);
-        printf("%s check_pin: legacy format (off=1)\n", DBG_TAG);
+DBG_PRINTF("%s check_pin: legacy format (off=1)\n", DBG_TAG);
     }
     else {
         pin_derive_verifier(data, len, dhash);
-        printf("%s check_pin: new format (off=2)\n", DBG_TAG);
+DBG_PRINTF("%s check_pin: new format (off=2)\n", DBG_TAG);
     }
     if (sizeof(dhash) != pin_fsize - off) {
-        printf("%s check_pin: SIZE MISMATCH 32 != %u-%d=%d -> SW_CONDITIONS_NOT_SATISFIED\n",
+DBG_PRINTF("%s check_pin: SIZE MISMATCH 32 != %u-%d=%d -> SW_CONDITIONS_NOT_SATISFIED\n",
                DBG_TAG, (unsigned)pin_fsize, off, (int)(pin_fsize - off));
         return SW_CONDITIONS_NOT_SATISFIED();
     }
     if (memcmp(file_get_data(pin) + off, dhash, sizeof(dhash)) != 0) {
-        printf("%s check_pin: PIN WRONG\n", DBG_TAG);
+DBG_PRINTF("%s check_pin: PIN WRONG\n", DBG_TAG);
         int retries;
         if ((retries = pin_wrong_retry(pin)) < PICOKEYS_OK) {
-            printf("%s check_pin: pin_wrong_retry returned BLOCKED (%d)\n", DBG_TAG, retries);
+DBG_PRINTF("%s check_pin: pin_wrong_retry returned BLOCKED (%d)\n", DBG_TAG, retries);
             return SW_PIN_BLOCKED();
         }
-        printf("%s check_pin: returning 0x63C0|%d = 0x63%02x\n", DBG_TAG, retries, 0xc0 | retries);
+DBG_PRINTF("%s check_pin: returning 0x63C0|%d = 0x63%02x\n", DBG_TAG, retries, 0xc0 | retries);
         return set_res_sw(0x63, 0xc0 | retries);
     }
 
-    printf("%s check_pin: PIN CORRECT, resetting retries\n", DBG_TAG);
+DBG_PRINTF("%s check_pin: PIN CORRECT, resetting retries\n", DBG_TAG);
     int r = pin_reset_retries(pin, false);
     if (r == PICOKEYS_ERR_BLOCKED) {
-        printf("%s check_pin: pin_reset_retries says BLOCKED (retries==0)\n", DBG_TAG);
+DBG_PRINTF("%s check_pin: pin_reset_retries says BLOCKED (retries==0)\n", DBG_TAG);
         return SW_PIN_BLOCKED();
     }
     if (r != PICOKEYS_OK) {
-        printf("%s check_pin: pin_reset_retries failed: %d\n", DBG_TAG, r);
+DBG_PRINTF("%s check_pin: pin_reset_retries failed: %d\n", DBG_TAG, r);
         return SW_MEMORY_FAILURE();
     }
     if (off == 1) {
@@ -626,14 +627,14 @@ int check_pin(const file_t *pin, const uint8_t *data, size_t len) {
             has_pw2 = true;
         }
         pin_derive_session(data, len, session_pw1);
-        printf("%s check_pin: PW1 authenticated (has_pw1=%d has_pw2=%d)\n", DBG_TAG, has_pw1, has_pw2);
+DBG_PRINTF("%s check_pin: PW1 authenticated (has_pw1=%d has_pw2=%d)\n", DBG_TAG, has_pw1, has_pw2);
     }
     else if (pin->fid == EF_PW3) {
         has_pw3 = true;
         pin_derive_session(data, len, session_pw3);
-        printf("%s check_pin: PW3 authenticated\n", DBG_TAG);
+DBG_PRINTF("%s check_pin: PW3 authenticated\n", DBG_TAG);
     }
-    printf("%s check_pin: SUCCESS -> SW_OK\n", DBG_TAG);
+DBG_PRINTF("%s check_pin: SUCCESS -> SW_OK\n", DBG_TAG);
     return SW_OK();
 }
 
