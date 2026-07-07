@@ -8,7 +8,7 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 - **OpenPGP card v3.4** — GnuPG, SSH, S/MIME, smartcard operations ✅
 - **OATH / OTP** *(in progress)* — TOTP/HOTP, Yubico OTP 🚧
 
-> Standalone ESP-IDF project optimized for **ESP32-S3 N16R8**.
+> Standalone ESP-IDF project optimized for **ESP32-S3**.
 > No Raspberry Pi Pico or cross-platform logic.
 >
 > **Hardware acceleration:** NIST curve ECDSA/ECDH/RSA operations use ESP32-S3's onboard ECC + MPI hardware accelerators via mbedTLS (`sdkconfig.defaults`).
@@ -36,15 +36,24 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 
 | Feature | Status |
 |---------|--------|
-| OpenPGP card v3.4 | ✅ |
+| OpenPGP card v3.4 (ISO 7816-4) | ✅ |
 | 3 key slots (SIG, DEC, AUT) | ✅ |
 | RSA 2048/3072/4096 | ✅ |
 | ECDSA (P-256, P-384, P-521, secp256k1) | ✅ |
 | Brainpool (256r1, 384r1, 512r1) | ✅ |
 | Curve25519 (X25519 ECDH) | ✅ |
+| Ed25519 (EdDSA, feat/ed25519) | 🚧 |
 | On-device key generation | ✅ |
-| Key import/export | ✅ |
-| PIN & Admin PIN protection | ✅ |
+| Key import/export (PUT DATA, IMPORT DATA) | ✅ |
+| PIN & Admin PIN (PW1/PW3) verification | ✅ |
+| Reset Code (RC) & RESET RETRY | ✅ |
+| Change PIN | ✅ |
+| PW Status Byte (DO C4) | ✅ |
+| KDF (Key Derivation Function) | ✅ |
+| Signature counter | ✅ |
+| Challenge-response (GET CHALLENGE) | ✅ |
+| Internal authentication | ✅ |
+| PSO (Compute Digital Signature, Decipher) | ✅ |
 | GnuPG / SSH / S/MIME compatible | ✅ |
 
 ### Default Algorithm
@@ -92,9 +101,10 @@ idf.py build
 |------|---------|
 | Chip | ESP32-S3 (Xtensa dual-core 240MHz) |
 | Flash | 16MB (Quad SPI QIO) |
-| PSRAM | 8MB (Octal PSRAM, optional) |
+| PSRAM | 8MB+ Octal (unused) |
 | LED | NeoPixel WS2812 (GPIO48, dimmed ~20%) |
 | USB | CCID (smartcard) + HID (FIDO2 CTAP) |
+| HW Accelerators | AES, SHA, ECC (NIST curves), MPI (big-number) |
 
 ---
 
@@ -145,6 +155,16 @@ sudo usermod -a -G dialout $USER
 
 ### OpenPGP (GnuPG)
 
+Default PINs (set in `components/openpgp/openpgp.c`):
+
+| Password | Default | Used for |
+|----------|---------|---------|
+| PW1 (user PIN) | `123456` | Signing, decryption, authentication |
+| RC (Reset Code) | `12345678` | Unblock PW1 when forgotten |
+| PW3 (admin PIN) | `12345678` | Admin operations, key management, PW1/PW3 change |
+
+Change all three during first-time setup with `gpg --edit-card` → `passwd`.
+
 ```bash
 # Check card
 gpg --card-status
@@ -165,11 +185,22 @@ gpg/card> generate
 > gpg/card> generate
 > ```
 > This only needs to be done once per fresh card.
+>
+> **PIN retry counter:** After flashing new firmware, existing devices may
+> have stale `EF_PW_PRIV` data. The firmware auto-detects and corrects this
+> on boot (reports `PW status empty/wrong size`). A single correct PIN entry
+> after boot will initialize the correct retry counters.
 
 ### FIDO2 / WebAuthn
 
-```
-Open https://webauthn.io in your browser and register.
+```bash
+# Check device info (make sure FIDO2 is alive)
+python3 -c "from fido2.hid import CtapHidDevice; \
+  d = next(CtapHidDevice.list_devices()); \
+  print(d.get_info())"
+
+# Browser test: https://webauthn.io
+
 ```
 
 **User Presence:** Press the **BOOT button** (GPIO0) on the board when
@@ -230,10 +261,6 @@ A 100ms startup delay is built into the firmware to minimize this.
   works but the 8-second scalar multiplication exceeds PC/SC timeouts
   in GPG. X25519 ECDH key generation needs completion. See the
   `feat/ed25519` branch for details.
-- **FIDO first-connection RX error:** On first USB enumeration (fresh flash
-  or power cycle), the host may report `FIDO err rx`.  A second connection
-  attempt works reliably.  Likely a host-side timing race with TinyUSB
-  enumeration.
 
 ---
 
@@ -375,10 +402,10 @@ esp32-fido2/
 │   ├── device_config.h        ← gitignored, your custom identity
 │   └── device_config.old.h    ← template, tracked in git
 ├── components/
-│   ├── picokeys/        # Core SDK (USB, FS, LED, RNG...)
-│   ├── openpgp/         # OpenPGP smartcard v3.4
-│   ├── fido/            # FIDO2 / CTAP 2.1 / U2F
-│   └── tinycbor/        # CBOR library
+│   ├── picokeys/        # Core SDK: USB (CCID/HID), flash FS, LED, RNG, crypto
+│   ├── openpgp/         # OpenPGP card v3.4: APDU commands, key management, PSO
+│   ├── fido/            # FIDO2 / CTAP 2.1: makeCredential, getAssertion, PIN/UV
+│   └── tinycbor/        # CBOR encode/decode (third-party)
 └── managed_components/  # TinyUSB, NeoPixel
 ```
 

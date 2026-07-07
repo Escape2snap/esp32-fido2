@@ -276,6 +276,16 @@ Scope goes **after the colon with a space**, not in parentheses:
 - ✅ `fix: openpgp correct PW_STATUS byte layout`
 - ❌ `fix(openpgp): correct PW_STATUS byte layout`
 
+## Branch Naming
+
+Use slash-separated prefixes, not hyphens:
+- ✅ `fix/pin-retry`, `feat/ed25519`, `docs/readme-update`
+- ❌ `fix-pin-retry`, `feat-ed25519`
+
+Worktree isolation names can use `/` as segment separators:
+`worktree/fix/pin-retry`. Requires WorktreeCreate hooks in settings.json
+(not currently configured — falls back to in-place checkout).
+
 ## Claude Rules
 
 - **No force commands.** Never use `--force` or `-f` with any command (git push, git reset, git checkout, rm, etc.). Normal operations only.
