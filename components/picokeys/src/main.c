@@ -26,10 +26,6 @@
 #include "driver/gpio.h"
 #include "rom/gpio.h"
 #include "tinyusb.h"
-#elif defined(PICO_PLATFORM)
-#include "bsp/board.h"
-#include "hardware/structs/ioqspi.h"
-#include "pico/stdio.h"
 #endif
 
 #include "random.h"
@@ -148,10 +144,6 @@ int main(void) {
     serial_init();
 
 #ifndef ENABLE_EMULATION
-#ifdef PICO_PLATFORM
-    board_init();
-    stdio_init_all();
-#endif
 
 #else
     emul_init("127.0.0.1", 35963);

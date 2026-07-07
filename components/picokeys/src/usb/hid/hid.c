@@ -433,7 +433,7 @@ int driver_process_usb_packet_hid(uint16_t read) {
             }
             last_packet_time = 0;
             memcpy(ctap_resp, ctap_req, sizeof(CTAPHID_FRAME));
-#if defined(PICO_PLATFORM) || defined(ESP_PLATFORM)
+#if defined(ESP_PLATFORM)
             sleep_ms(1000); //For blinking the device during 1 seg
 #endif
             driver_write_hid(ITF_HID_CTAP, (const uint8_t *)ctap_resp, 64);

@@ -23,7 +23,19 @@
 #include "picokeys_version.h"
 #include "usb.h"
 #include "serial.h"
+
+/* Optional user config (gitignored — copy from device_config.old.h) */
+#if __has_include("device_config.h")
 #include "device_config.h"
+#endif
+
+/* Fallback defaults if device_config.h is absent or partial */
+#ifndef DEVICE_VID
+#define DEVICE_VID           0x303A
+#endif
+#ifndef DEVICE_PID
+#define DEVICE_PID           0x0002
+#endif
 
 #ifndef USB_VID
 #define USB_VID   DEVICE_VID
@@ -32,10 +44,8 @@
 #define USB_PID   DEVICE_PID
 #endif
 
-#if defined(PICO_PLATFORM) || defined(ESP_PLATFORM)
+#ifndef USB_BCD
 #define USB_BCD   0x0210
-#else
-#define USB_BCD   0x0110
 #endif
 
 #define USB_CONFIG_ATT_ONE TU_BIT(7)
