@@ -11,7 +11,7 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 > Standalone ESP-IDF project optimized for **ESP32-S3**.
 > No Raspberry Pi Pico or cross-platform logic.
 >
-> **Hardware acceleration:** NIST curve ECDSA/ECDH/RSA operations use ESP32-S3's onboard ECC + MPI hardware accelerators via mbedTLS (`sdkconfig.defaults`).
+> **Hardware acceleration:** ESP32-S3 uses an **RSA Accelerator** (multi-precision integer engine, up to 4096-bit) repurposed for ECC point multiplication. ESP-IDF's mbedTLS port uses it for **P-256 (secp256r1) and P-192 (secp192r1)** point multiplication; P-384 and P-521 fall back to software. RSA itself gets significant speedup (~323×). All configurable via `sdkconfig.defaults`.
 
 ---
 
@@ -104,7 +104,7 @@ idf.py build
 | PSRAM | 8MB+ Octal (unused) |
 | LED | NeoPixel WS2812 (GPIO48, dimmed ~20%) |
 | USB | CCID (smartcard) + HID (FIDO2 CTAP) |
-| HW Accelerators | AES, SHA, ECC (NIST curves), MPI (big-number) |
+| HW Accelerators | AES, SHA, RSA/ECC (RSA Accelerator, up to 4096-bit) |
 
 ---
 
@@ -121,10 +121,13 @@ cd ~/esp-idf-v5.4.4
 . ./export.sh
 cd ~/esp32-fido2
 
-# Clone third-party dependencies (see Dependency Notes in CLAUDE.md)
+# Clone third-party dependencies
 git clone https://github.com/intel/tinycbor.git third-party/tinycbor
 cp third-party/tinycbor/src/tinycbor-export.h.in third-party/tinycbor/src/tinycbor-export.h
-# then create third-party/tinycbor/src/tinycbor-version.h manually
+
+# Create tinycbor version header (required by the library)
+printf '#define TINYCBOR_VERSION_MAJOR 7\n#define TINYCBOR_VERSION_MINOR 0\n#define TINYCBOR_VERSION_PATCH 0\n' \
+  > third-party/tinycbor/src/tinycbor-version.h
 
 # First time: clean flash
 idf.py set-target esp32s3    # ⚠️ required (tinyusb doesn't support default esp32)
@@ -210,12 +213,16 @@ and authentication.
 ### Device Configuration
 
 ```bash
+# Optional: CMake auto-copies the template on first build if device_config.h is missing
 cp main/device_config.old.h main/device_config.h
 # edit USB names, VID, PID, interface strings
 ```
 
 `main/device_config.h` is gitignored — your custom identity stays local.
 The template at `main/device_config.old.h` has the default values.
+
+To use your custom identity, `#include "device_config.h"` is picked up
+by `usb_descriptors.c` automatically via `__has_include`.
 
 ### Python
 
@@ -340,8 +347,7 @@ in an infinite loop.
 | SHA-256 error check | `serial.c:43-46` | Added `sha_ret != 0` check |
 | HID bufsize validation | `hid.c:283-286` | Added `bufsize != 64` check |
 | CTAP_MAX_PACKET_SIZE | `ctap_hid.h:145` | `128`→`127` segments |
-| USB power descriptor | `usb_descriptors.c:43` | 4mA→100mA |
-| USB power descriptor | `usb_descriptors.c:43` | 4mA→100mA |
+| USB power descriptor | `usb_descriptors.c:53` | 4mA→100mA |
 | flash use-after-free | `flash.c:134-138` | Save `old_file_data` before clear |
 | meta_delete TLV corruption | `file.c:408,414` | Remove spurious `-1` offset |
 | part0 NULL crash | `low_flash.c:247-250` | Added `!part0` check |
