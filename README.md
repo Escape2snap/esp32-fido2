@@ -392,6 +392,19 @@ phy_data.enabled_usb_itf = PHY_USB_ITF_CCID | PHY_USB_ITF_HID;
 phy_data.enabled_usb_itf = PHY_USB_ITF_CCID | PHY_USB_ITF_WCID;
 ```
 
+### Security & Debug
+
+Configured in `sdkconfig.defaults`:
+
+| Setting | Default | Note |
+|---------|---------|------|
+| Core dump | **disabled** | Crash info suppressed, no serial dump |
+| USB-Serial-JTAG | **disabled** | Prevents runtime JTAG debug access via USB |
+| JTAG eFuse | not burned | Can re-enable by rebuilding; for permanent disable see `espefuse.py burn_efuse JTAG_DISABLE` |
+
+JTAG is disabled at the Kconfig level only — recompile with `=y` to restore.
+For hardware-level permanent disable, burn the `JTAG_DISABLE` eFuse (irreversible).
+
 ---
 
 ## Project Structure
