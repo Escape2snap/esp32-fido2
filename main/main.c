@@ -175,6 +175,9 @@ int app_main(void) {
     // CCID (OpenPGP) + HID (FIDO2) — no keyboard, no WCID
     phy_data.enabled_usb_itf = PHY_USB_ITF_CCID | PHY_USB_ITF_HID;
     phy_data.enabled_usb_itf_present = true;
+    // Commission the BOOT button (GPIO0) as the user-presence button.
+    phy_data.up_btn_present = true;
+    phy_data.up_btn = 30;  // 30-second timeout
     led_init();
     vTaskDelay(pdMS_TO_TICKS(100));  // USB hardware settle time
     usb_init();
