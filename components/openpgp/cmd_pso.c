@@ -29,14 +29,14 @@ int cmd_pso(void) {
     uint16_t algo_fid = 0x0, pk_fid = 0x0;
     bool is_aes = false;
     if (P1(apdu) == 0x9E && P2(apdu) == 0x9A) {
-        if (!has_pw3 && !has_pw2) {
+        if (!has_pw3 && !has_pw1) {
             return SW_SECURITY_STATUS_NOT_SATISFIED();
         }
         algo_fid = EF_ALGO_PRIV1;
         pk_fid = EF_PK_SIG;
     }
     else if (P1(apdu) == 0x80 && P2(apdu) == 0x86) {
-        if (!has_pw3 && !has_pw1) {
+        if (!has_pw3 && !has_pw2) {
             return SW_SECURITY_STATUS_NOT_SATISFIED();
         }
         algo_fid = algo_dec;
