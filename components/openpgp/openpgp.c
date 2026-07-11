@@ -644,7 +644,7 @@ int inc_sig_count(void) {
     if (r != PICOKEYS_OK) {
         return PICOKEYS_EXEC_ERROR;
     }
-    flash_commit_sync(5000);
+    flash_commit();
     return PICOKEYS_OK;
 }
 
@@ -658,7 +658,7 @@ int reset_sig_count(void) {
     if (r != PICOKEYS_OK) {
         return PICOKEYS_EXEC_ERROR;
     }
-    flash_commit_sync(5000);
+    flash_commit();
     return PICOKEYS_OK;
 }
 
