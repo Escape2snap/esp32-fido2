@@ -93,7 +93,7 @@ static bool locked_out = false;
 static bool locked_out = true;
 #endif
 
-uint8_t ready_pages = 0;
+static uint8_t ready_pages = 0;
 
 volatile bool flash_available = false;
 
@@ -220,11 +220,8 @@ void low_flash_task(void){
             flash_available = false;
         }
 #ifdef ESP_PLATFORM
-        static bool mmap_once = false;
-        if (!mmap_once) {
-            esp_partition_mmap(part0, 0, part0->size, ESP_PARTITION_MMAP_DATA, (const void **)&map, (esp_partition_mmap_handle_t *)&fd_map);
-            mmap_once = true;
-        }
+        esp_partition_munmap(fd_map);
+        esp_partition_mmap(part0, 0, part0->size, ESP_PARTITION_MMAP_DATA, (const void **)&map, (esp_partition_mmap_handle_t *)&fd_map);
 #endif
         mutex_exit(&mtx_flash);
     }
