@@ -213,13 +213,25 @@ void scan_files_openpgp(void) {
         }
     }
     if ((ef = file_search_by_fid(EF_PW_PRIV, NULL, SPECIFY_ANY))) {
-        if (!ef->data || file_get_size(ef) != 7) {
+        uint16_t pw_priv_sz = file_get_size(ef);
+        if (!ef->data || (pw_priv_sz != 7 && pw_priv_sz != 9)) {
             printf("PW status is empty. Initializing to default\r\n");
             /* Per OpenPGP Card spec v3.4 §4.3.1 DO C4:
                [PW1_validity, max_PW1_len, max_RC_len, max_PW3_len,
                 PW1_retries, RC_retries, PW3_retries] */
             const uint8_t def[] = { 0x01, 0x7F, 0x7F, 0x7F, 3, 3, 3 };
             file_put_data(ef, def, sizeof(def));
+        }
+        else if (ef->data && pw_priv_sz == 7) {
+            /* Old-format detection: if retry counters at offsets 4-6 are
+               all zero, the data was written with the pre-76b5311 byte
+               layout and needs reinitialization. */
+            uint8_t *d = file_get_data(ef);
+            if (d[4] == 0 && d[5] == 0 && d[6] == 0) {
+                printf("PW status has old-format zeros. Reinitializing.\r\n");
+                const uint8_t def[] = { 0x01, 0x7F, 0x7F, 0x7F, 3, 3, 3 };
+                file_put_data(ef, def, sizeof(def));
+            }
         }
     }
     if ((ef = file_search_by_fid(EF_UIF_SIG, NULL, SPECIFY_ANY))) {
@@ -258,7 +270,8 @@ void scan_files_openpgp(void) {
         }
     }
     if ((ef = file_search_by_fid(EF_PW_RETRIES, NULL, SPECIFY_ANY))) {
-        if (!ef->data || file_get_size(ef) != 4) {
+        uint16_t pw_ret_sz = file_get_size(ef);
+        if (!ef->data || (pw_ret_sz != 4 && pw_ret_sz != 6)) {
             printf("PW retries is empty. Initializing to default\r\n");
             const uint8_t def[] = { 0x1, 3, 3, 3 };
             file_put_data(ef, def, sizeof(def));
@@ -631,7 +644,7 @@ int inc_sig_count(void) {
     if (r != PICOKEYS_OK) {
         return PICOKEYS_EXEC_ERROR;
     }
-    flash_commit();
+    flash_commit_sync(5000);
     return PICOKEYS_OK;
 }
 
@@ -645,7 +658,7 @@ int reset_sig_count(void) {
     if (r != PICOKEYS_OK) {
         return PICOKEYS_EXEC_ERROR;
     }
-    flash_commit();
+    flash_commit_sync(5000);
     return PICOKEYS_OK;
 }
 
