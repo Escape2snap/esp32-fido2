@@ -132,6 +132,19 @@ int app_main(void) {
     otp_init_files();
     low_flash_init();
     file_scan_flash();
+
+    /* Initialize device salt (EF_DEV_SALT, fid 0x1130) before any applet
+       init, so derive_kbase() always produces a stable result.  Without
+       this, OpenPGP PIN verifiers created before scan_files_fido() would
+       use the "NO-OTP" fallback, then suddenly get a different kbase after
+       the random salt is created, breaking all existing PIN verification. */
+    file_t *ef_salt = file_search(0x1130);
+    if (!file_has_data(ef_salt)) {
+        const uint8_t *salt = random_bytes_get(32);
+        file_put_data(ef_salt, salt, 32);
+        flash_commit();
+    }
+
     init_rtc();
     phy_init();
     // CCID (OpenPGP) + HID (FIDO2) — no keyboard, no WCID
