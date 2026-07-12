@@ -221,7 +221,7 @@ void hwrng_wait_full(void) {
         }
 #if defined(PICO_PLATFORM) || defined(ESP_PLATFORM)
         if (core == 1) {
-            sleep_ms(1);
+            hwrng_task();
         }
         else
 #endif
