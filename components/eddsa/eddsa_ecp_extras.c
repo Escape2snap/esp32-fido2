@@ -333,6 +333,7 @@ cleanup:
 /* ------------------------------------------------------------------ */
 /*  mbedtls_ecp_point_encode — Edwards version                        */
 /* ------------------------------------------------------------------ */
+#if !defined(MBEDTLS_ECP_C)
 int mbedtls_ecp_point_encode(const mbedtls_ecp_group *grp,
                              mbedtls_mpi *q,
                              const mbedtls_ecp_point *pt) {
@@ -348,10 +349,12 @@ int mbedtls_ecp_point_encode(const mbedtls_ecp_group *grp,
 cleanup:
     return ret;
 }
+#endif /* !MBEDTLS_ECP_C */
 
 /* ------------------------------------------------------------------ */
 /*  mbedtls_ecp_expand_edwards — stub (no longer needed for Ed25519)  */
 /* ------------------------------------------------------------------ */
+#if !defined(MBEDTLS_ECP_C)
 #if defined(MBEDTLS_ECP_DP_ED448_ENABLED) && defined(MBEDTLS_SHA3_C)
 /* Ed448 seed expansion — kept for compatibility, not yet used */
 int mbedtls_ecp_expand_edwards(mbedtls_ecp_group *grp,
@@ -370,6 +373,7 @@ int mbedtls_ecp_expand_edwards(mbedtls_ecp_group *grp,
     return MBEDTLS_ERR_ECP_FEATURE_UNAVAILABLE;
 }
 #endif
+#endif /* !MBEDTLS_ECP_C */
 
 /* ------------------------------------------------------------------ */
 /*  ed25519_setup_group — set group parameters for Ed25519            */
