@@ -24,6 +24,9 @@
 #include "random.h"
 #include "mbedtls/ecdh.h"
 #include "mbedtls/asn1.h"
+#ifdef MBEDTLS_EDDSA_C
+#include "mbedtls/sha512.h"
+#endif
 
 int cmd_pso(void) {
     uint16_t algo_fid = 0x0, pk_fid = 0x0;
@@ -158,9 +161,6 @@ int cmd_pso(void) {
             inc_sig_count();
         }
         else if (P1(apdu) == 0x80 && P2(apdu) == 0x86) {
-            if (algo[0] == ALGO_EDDSA) {
-                return SW_FUNC_NOT_SUPPORTED();
-            }
             mbedtls_ecdh_context ctx;
             uint8_t kdata[67];
             uint8_t *data = apdu.data, *end = data + apdu.nc;
@@ -179,20 +179,41 @@ int cmd_pso(void) {
                 mbedtls_asn1_get_tag(&data, end, &len, 0x86) != 0) {
                 return SW_WRONG_DATA();
             }
-            //if (len != 2*key_size-1)
-            //    return SW_WRONG_LENGTH();
             memcpy(kdata, file_get_data(ef), key_size);
             if (dek_decrypt(kdata, key_size) != 0) {
                 return SW_EXEC_ERROR();
             }
             mbedtls_ecdh_init(&ctx);
             mbedtls_ecp_group_id gid = kdata[0];
+#ifdef MBEDTLS_EDDSA_C
+            /* Ed25519 → X25519 key conversion (RFC 8032 §5.1.5 + RFC 7748 §5):
+             * seed → SHA-512 → clamp first 32 bytes → X25519 scalar */
+            if (gid == MBEDTLS_ECP_DP_ED25519) {
+                unsigned char hash[64];
+                mbedtls_sha512(kdata + 1, 32, hash, 0);
+                hash[0] &= 248;
+                hash[31] &= 127;
+                hash[31] |= 64;
+                memcpy(kdata + 1, hash, 32);
+                kdata[0] = MBEDTLS_ECP_DP_CURVE25519;
+                gid = MBEDTLS_ECP_DP_CURVE25519;
+                key_size = 33;
+            }
+#endif
             r = mbedtls_ecdh_setup(&ctx, gid);
             if (r != 0) {
                 mbedtls_ecdh_free(&ctx);
                 return SW_DATA_INVALID();
             }
-            r = mbedtls_ecp_read_key(gid, (mbedtls_ecdsa_context *)&ctx.ctx.mbed_ecdh, kdata + 1, key_size - 1);
+            /* Load private key via intermediate keypair + ecdh_get_params
+             * (avoids type-punning cast on ctx.ctx.mbed_ecdh) */
+            mbedtls_ecp_keypair key;
+            mbedtls_ecp_keypair_init(&key);
+            r = mbedtls_ecp_read_key(gid, &key, kdata + 1, key_size - 1);
+            if (r == 0) {
+                r = mbedtls_ecdh_get_params(&ctx, &key, MBEDTLS_ECDH_OURS);
+            }
+            mbedtls_ecp_keypair_free(&key);
             if (r != 0) {
                 mbedtls_ecdh_free(&ctx);
                 return SW_DATA_INVALID();

@@ -765,10 +765,14 @@ int load_private_key_ecdsa(mbedtls_ecp_keypair *ctx, file_t *fkey, bool use_dek)
         return PICOKEYS_EXEC_ERROR;
     }
     mbedtls_platform_zeroize(kdata, sizeof(kdata));
-    r = mbedtls_ecp_keypair_calc_public(ctx, random_fill_iterator, NULL);
-    if (r != 0) {
-        mbedtls_ecp_keypair_free(ctx);
-        return PICOKEYS_EXEC_ERROR;
+    /* Skip calc_public for Ed25519 — ecdsa_sign / mbedtls_eddsa_write_signature
+     * computes the public key internally. This eliminates ~2s of redundant work. */
+    if (gid != MBEDTLS_ECP_DP_ED25519) {
+        r = mbedtls_ecp_keypair_calc_public(ctx, random_fill_iterator, NULL);
+        if (r != 0) {
+            mbedtls_ecp_keypair_free(ctx);
+            return PICOKEYS_EXEC_ERROR;
+        }
     }
     return PICOKEYS_OK;
 }

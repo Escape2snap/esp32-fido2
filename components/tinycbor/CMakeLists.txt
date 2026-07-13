@@ -10,3 +10,6 @@ idf_component_register(
 )
 
 idf_component_set_property(${COMPONENT_NAME} WHOLE_ARCHIVE ON)
+
+# Suppress -Wreturn-type on third-party code for GCC 14+ compatibility
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-return-type)
