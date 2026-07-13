@@ -905,10 +905,18 @@ int rsa_sign(mbedtls_rsa_context *ctx, const uint8_t *data, size_t data_len, uin
         hsh = (uint8_t *) data;
     }
     if (md == MBEDTLS_MD_NONE) {
-        if (data_len < key_size) { //needs padding
-            memset((uint8_t *) data + data_len, 0, key_size - data_len);
+        if (data_len < key_size) { //needs padding — use temp buffer to avoid modifying const data
+            uint8_t *padded = (uint8_t *) calloc(key_size, sizeof(uint8_t));
+            if (!padded) {
+                return PICOKEYS_ERR_MEMORY_FATAL;
+            }
+            memcpy(padded, data, data_len);
+            r = mbedtls_rsa_private(ctx, random_fill_iterator, NULL, padded, out);
+            free(padded);
         }
-        r = mbedtls_rsa_private(ctx, random_fill_iterator, NULL, data, out);
+        else {
+            r = mbedtls_rsa_private(ctx, random_fill_iterator, NULL, data, out);
+        }
     }
     else {
         uint8_t *signature = (uint8_t *) calloc(key_size, sizeof(uint8_t));
