@@ -58,8 +58,28 @@ static void sm_derive_key(const uint8_t *input, size_t input_len, uint8_t counte
 
 void sm_derive_all_keys(const uint8_t *derived, size_t derived_len) {
     memcpy(sm_nonce, random_bytes_get(8), 8);
+    if (sm_protocol == MSE_AES) {
+        /* v3.4+: read SM keys directly from DOs (written via PUT DATA 0xD9/0xDA).
+         * Fall back to derivation if DOs are not yet populated. */
+        const uint16_t fid_enc = 0x00d9, fid_mac = 0x00da;
+        file_t *ef_enc = file_search_by_fid(fid_enc, NULL, SPECIFY_EF);
+        file_t *ef_mac = file_search_by_fid(fid_mac, NULL, SPECIFY_EF);
+        if (ef_enc && ef_mac && file_has_data(ef_enc) && file_has_data(ef_mac)) {
+            size_t sz_enc = file_get_size(ef_enc);
+            size_t sz_mac = file_get_size(ef_mac);
+            if (sz_enc <= sizeof(sm_kenc)) {
+                memcpy(sm_kenc, file_get_data(ef_enc), sz_enc);
+            }
+            if (sz_mac <= sizeof(sm_kmac)) {
+                memcpy(sm_kmac, file_get_data(ef_mac), sz_mac);
+            }
+            goto key_loaded;
+        }
+    }
+    /* v2.2 fallback or AES without DO keys: SHA-1 derivation */
     sm_derive_key(derived, derived_len, 1, sm_nonce, sizeof(sm_nonce), sm_kenc);
     sm_derive_key(derived, derived_len, 2, sm_nonce, sizeof(sm_nonce), sm_kmac);
+key_loaded:
     mbedtls_mpi_free(&sm_mSSC);
     mbedtls_mpi_init(&sm_mSSC);
     mbedtls_mpi_grow(&sm_mSSC, sm_blocksize);

@@ -39,6 +39,14 @@ static uint16_t tag_len(uint8_t **data) {
 }
 
 int cmd_import_data(void) {
+    /*
+     * NOTE: INS 0xDB is NOT defined in the OpenPGP Card specification (v3.4.1 §7).
+     * It is a project extension for importing externally-generated private keys
+     * (RSA, ECDSA, Ed25519 seed, X25519 scalar) for testing and provisioning.
+     *
+     * Standard key operations use GENERATE ASYMMETRIC KEY PAIR (0x47)
+     * and PUT DATA (0xDA). The 0xDB extension bypasses on-card key generation.
+     */
     file_t *ef = NULL;
     uint16_t fid = 0x0;
     if (P1(apdu) != 0x3F || P2(apdu) != 0xFF) {

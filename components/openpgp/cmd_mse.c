@@ -18,6 +18,12 @@
 #include "openpgp.h"
 
 int cmd_mse(void) {
+    /*
+     * Per OpenPGP Card v3.4.1 §7.2.18, only P1=0x41 (MSE SET DST) is defined.
+     * P1=0xB3 (MSE SET ST from ISO 7816-4) is NOT in the OpenPGP spec —
+     * signature keys always use Key-Ref 1 (§7.2.10) and cannot be switched via MSE.
+     * Returning SW_WRONG_P1P2() for any P1 ≠ 0x41 is correct behaviour.
+     */
     if (P1(apdu) != 0x41 || (P2(apdu) != 0xA4 && P2(apdu) != 0xB8)) {
         return SW_WRONG_P1P2();
     }

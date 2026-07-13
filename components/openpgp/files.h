@@ -75,6 +75,8 @@
 #define EF_UIF_SIG      0x00d6 //S
 #define EF_UIF_DEC      0x00d7 //S
 #define EF_UIF_AUT      0x00d8 //S
+#define EF_SM_ENC       0x00d9 //S — SM-ENC key (AES-128, written via PUT DATA DO 0xD9)
+#define EF_SM_MAC       0x00da //S — SM-MAC key (AES-128, written via PUT DATA DO 0xDA)
 #define EF_KEY_INFO     0x00de //S
 #define EF_KDF          0x00f9 //C
 #define EF_ALGO_INFO    0x00fa //C
