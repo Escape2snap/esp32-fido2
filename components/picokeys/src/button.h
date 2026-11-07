@@ -29,5 +29,5 @@ extern bool button_wait(void);
 extern void button_task(void);
 
 #endif // BUTTON_H
-extern bool cancel_button;
+extern volatile bool cancel_button;
 extern bool force_button_wait;
