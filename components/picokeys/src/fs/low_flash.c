@@ -358,6 +358,10 @@ int flash_program_block(uintptr_t addr, const uint8_t *data, size_t len) {
     if (!data || len == 0) {
         return PICOKEYS_ERR_NULL_PARAM;
     }
+    if ((addr & (FLASH_SECTOR_SIZE - 1)) + len > FLASH_SECTOR_SIZE) {
+        printf("ERROR: FLASH WRITE CROSSES SECTOR BOUNDARY\n");
+        return PICOKEYS_ERR_NO_MEMORY;
+    }
 
     mutex_enter_blocking(&mtx_flash);
     if (ready_pages == TOTAL_FLASH_PAGES) {
