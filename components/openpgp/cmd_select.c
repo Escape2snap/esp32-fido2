@@ -53,6 +53,10 @@ int cmd_select(void) {
             if (apdu.nc != 0) {
                 return SW_REFERENCE_NOT_FOUND();
             }
+            pe = currentDF ? get_parent(currentDF) : NULL;
+            if (!pe) {
+                pe = (file_t *) MF;
+            }
         }
         else if (p1 == 0x04) { //Select by DF name - e.g., [truncated] application identifier
             if (!(pe = file_search_by_name(apdu.data, apdu.nc))) {
