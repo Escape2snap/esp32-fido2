@@ -226,12 +226,22 @@ void low_flash_task(void){
         if (wrote_any) {
             /* Refreshing the mapping invalidates every pointer returned by
                file_get_data()/flash_read(); doing it on every 10 ms tick,
-               even when nothing was written, made those pointers unstable. */
-            esp_partition_munmap(fd_map);
-            esp_err_t map_err = esp_partition_mmap(part0, 0, part0->size, ESP_PARTITION_MMAP_DATA, (const void **)&map, (esp_partition_mmap_handle_t *)&fd_map);
-            if (map_err != ESP_OK) {
-                ESP_LOGE("low_flash", "remap failed: %d", map_err);
-                map = NULL;
+               even when nothing was written, made those pointers unstable.
+               core 1 must not read through the mapping while it is being
+               replaced, so hold the lockout across the remap. */
+            if (multicore_lockout_start_timeout_us(1000) == false) {
+                printf("WARN: FLASH LOCKOUT START TIMEOUT (remap skipped)\n");
+            }
+            else {
+                esp_partition_munmap(fd_map);
+                esp_err_t map_err = esp_partition_mmap(part0, 0, part0->size, ESP_PARTITION_MMAP_DATA, (const void **)&map, (esp_partition_mmap_handle_t *)&fd_map);
+                if (map_err != ESP_OK) {
+                    ESP_LOGE("low_flash", "remap failed: %d", map_err);
+                    map = NULL;
+                }
+                if (multicore_lockout_end_timeout_us(1000) == false) {
+                    printf("WARN: FLASH LOCKOUT END TIMEOUT\n");
+                }
             }
         }
 #endif
