@@ -973,6 +973,9 @@ static int cmd_piv_put_data(void) {
 }
 
 static int cmd_set_mgmkey(void) {
+    if (!has_mgm) {
+        return SW_SECURITY_STATUS_NOT_SATISFIED();
+    }
     if (P1(apdu) != 0xFF) {
         return SW_INCORRECT_P1P2();
     }
@@ -1009,6 +1012,9 @@ static int cmd_set_mgmkey(void) {
 }
 
 static int cmd_move_key(void) {
+    if (!has_mgm) {
+        return SW_SECURITY_STATUS_NOT_SATISFIED();
+    }
     if (apdu.nc != 0) {
         return SW_WRONG_LENGTH();
     }
@@ -1270,6 +1276,9 @@ static int cmd_attestation(void) {
 }
 
 static int cmd_import_asym(void) {
+    if (!has_mgm) {
+        return SW_SECURITY_STATUS_NOT_SATISFIED();
+    }
     uint8_t algo = P1(apdu), key_ref = P2(apdu);
     if (key_ref != EF_PIV_KEY_AUTHENTICATION && key_ref != EF_PIV_KEY_SIGNATURE && key_ref != EF_PIV_KEY_KEYMGM && key_ref != EF_PIV_KEY_CARDAUTH && !(key_ref >= EF_PIV_KEY_RETIRED1 && key_ref <= EF_PIV_KEY_RETIRED20)) {
         return SW_INCORRECT_P1P2();
