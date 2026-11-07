@@ -358,6 +358,21 @@ int load_dek(void) {
             r = aes_decrypt_cfb_256(session_pwpiv, dek, dek + IV_SIZE, 32);
         }
     }
+    else if (has_rc) {
+        /* PUT DATA DO D3 stores the RC-wrapped DEK in EF_DEK (format 0x03 +
+           GCM payload).  Without this branch RESET RETRY COUNTER re-encrypted
+           the previous/stale DEK with the new PW1 and made the card
+           undecryptable. */
+        file_t *tf = file_search_by_fid(EF_DEK, NULL, SPECIFY_EF);
+        if (!tf || !file_has_data(tf)) {
+            return PICOKEYS_ERR_FILE_NOT_FOUND;
+        }
+        uint8_t *ef_data = file_get_data(tf);
+        if (ef_data[0] != 0x3) {
+            return PICOKEYS_ERR_NULL_PARAM;
+        }
+        r = decrypt_with_aad(session_rc, ef_data + 1, DEK_AAD_SIZE, PIN_KDF_DEFAULT_VERSION, dek);
+    }
     if (r != 0) {
         release_dek();
         return PICOKEYS_EXEC_ERROR;
