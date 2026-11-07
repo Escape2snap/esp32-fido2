@@ -45,7 +45,11 @@ int process_apdu(void) {
         }
         chain_used = (size_t)(chain_ptr - chain_buf);
         if (chain_used + apdu.nc >= sizeof(chain_buf)) {
-            return SW_CLA_NOT_SUPPORTED();
+            /* ISO 7816-4: wrong length, not wrong CLA.  Also drop the
+               partial chain so it cannot leak into the next command. */
+            is_chaining = false;
+            chain_ptr = chain_buf;
+            return SW_WRONG_LENGTH();
         }
         memcpy(chain_ptr, apdu.data, apdu.nc);
         chain_ptr += apdu.nc;
@@ -146,6 +150,12 @@ uint16_t apdu_process(uint8_t itf, apdu_src_t src, const uint8_t *buffer, uint16
         }
     }
     //printf("apdu.nc %u, apdu.ne %u\n",apdu.nc,apdu.ne);
+    if (apdu.nc > 0 &&
+        (apdu.data == NULL || buffer_size < 5 ||
+         (uint32_t)(apdu.data - buffer) + apdu.nc > (uint32_t)buffer_size)) {
+        /* Lc claims more bytes than the transport delivered. */
+        return apdu_send_error(itf, src, 0x6700);
+    }
     if (apdu.header[1] == 0xc0) {
         //printf("apdu.ne %u, apdu.rlen %d, bk %x\n",apdu.ne,apdu.rlen,rdata_bk);
         if (rdata_gr == NULL || apdu.rdata == NULL || apdu.rlen == 0) {
