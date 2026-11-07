@@ -63,6 +63,10 @@ char atr_openpgp[] = {
 
 int openpgp_process_apdu(void);
 
+/* Retry counters are security state: do not return 63Cx before the new
+   counter is committed to flash. */
+#define PIN_RETRY_COMMIT_TIMEOUT_MS 2000
+
 extern uint32_t board_button_read(void);
 
 bool wait_button_pressed_fid(uint16_t fid) {
@@ -478,6 +482,9 @@ int pin_reset_retries(const file_t *pin, bool force) {
         return PICOKEYS_ERR_MEMORY_FATAL;
     }
     uint8_t p[64];
+    if (sz_pw > sizeof(p)) {
+        return PICOKEYS_ERR_MEMORY_FATAL;
+    }
     memcpy(p, file_get_data(pw_status), sz_pw);
     uint8_t retries = p[pw_idx];
     if (retries == 0 && force == false) { //blocked
@@ -486,7 +493,9 @@ int pin_reset_retries(const file_t *pin, bool force) {
     uint8_t max_retries = file_get_data(pw_retries)[ret_idx];
     p[pw_idx] = max_retries;
     int r = file_put_data(pw_status, p, sz_pw);
-    flash_commit();
+    if (r == PICOKEYS_OK && !flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS)) {
+        return PICOKEYS_EXEC_ERROR;
+    }
     return r;
 }
 
@@ -500,6 +509,9 @@ static int pin_wrong_retry(const file_t *pin) {
     }
     uint8_t p[64];
     uint16_t sz = file_get_size(pw_status);
+    if (sz > sizeof(p)) {
+        return PICOKEYS_ERR_MEMORY_FATAL;
+    }
     memcpy(p, file_get_data(pw_status), sz);
     int idx = 3 + (pin->fid & 0xf); /* DO C4: retry counters at offset 3+ */
     if (idx >= sz) {
@@ -511,7 +523,9 @@ static int pin_wrong_retry(const file_t *pin) {
         if (r != PICOKEYS_OK) {
             return r;
         }
-        flash_commit();
+        if (!flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS)) {
+            return PICOKEYS_EXEC_ERROR;
+        }
         if (p[idx] == 0) {
             return PICOKEYS_ERR_BLOCKED;
         }
