@@ -361,7 +361,18 @@ static int cmd_read(void) {
 }
 
 #if defined(PICO_RP2350) || defined(ESP_PLATFORM)
+/* Burning SECURE_BOOT_EN with a build-time digest is a one-way
+   manufacturing step.  It must not be reachable from a normal firmware
+   over USB: a mismatching digest bricks the device on the next boot.
+   Production provisioning builds opt in at compile time. */
+#ifndef PICOKEYS_ENABLE_RESCUE_SECURE_BOOT
+#define PICOKEYS_ENABLE_RESCUE_SECURE_BOOT 0
+#endif
+
 static int cmd_secure(void) {
+    if (!PICOKEYS_ENABLE_RESCUE_SECURE_BOOT) {
+        return SW_CONDITIONS_NOT_SATISFIED();
+    }
     if (apdu.nc != 0) {
         return SW_WRONG_LENGTH();
     }

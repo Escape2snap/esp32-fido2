@@ -104,6 +104,7 @@ void low_flash_commit(void);
 
 void low_flash_task(void){
     if (mutex_try_enter(&mtx_flash, NULL) == true) {
+        bool wrote_any = false;
         if (locked_out == true && flash_available == true && ready_pages > 0) {
             //printf(" DO_FLASH AVAILABLE\n");
             int __before = ready_pages;
@@ -155,6 +156,7 @@ void low_flash_task(void){
 #endif
                     flash_pages[r].ready = false;
                     flash_pages[r].erase = false;  /* also consumed if set by flash_erase_page */
+                    wrote_any = true;
                     if (ready_pages > 0) {
                         ready_pages--;
                     } else {
@@ -202,6 +204,7 @@ void low_flash_task(void){
                     memset(map + flash_pages[r].address, 0, FLASH_SECTOR_SIZE);
 #endif
                     flash_pages[r].erase = false;
+                    wrote_any = true;
                     if (ready_pages > 0) ready_pages--; else printf("ERROR: ready_pages underflow at erase page %d\n", r);
                 }
             }
@@ -220,8 +223,27 @@ void low_flash_task(void){
             flash_available = false;
         }
 #ifdef ESP_PLATFORM
-        esp_partition_munmap(fd_map);
-        esp_partition_mmap(part0, 0, part0->size, ESP_PARTITION_MMAP_DATA, (const void **)&map, (esp_partition_mmap_handle_t *)&fd_map);
+        if (wrote_any) {
+            /* Refreshing the mapping invalidates every pointer returned by
+               file_get_data()/flash_read(); doing it on every 10 ms tick,
+               even when nothing was written, made those pointers unstable.
+               core 1 must not read through the mapping while it is being
+               replaced, so hold the lockout across the remap. */
+            if (multicore_lockout_start_timeout_us(1000) == false) {
+                printf("WARN: FLASH LOCKOUT START TIMEOUT (remap skipped)\n");
+            }
+            else {
+                esp_partition_munmap(fd_map);
+                esp_err_t map_err = esp_partition_mmap(part0, 0, part0->size, ESP_PARTITION_MMAP_DATA, (const void **)&map, (esp_partition_mmap_handle_t *)&fd_map);
+                if (map_err != ESP_OK) {
+                    ESP_LOGE("low_flash", "remap failed: %d", map_err);
+                    map = NULL;
+                }
+                if (multicore_lockout_end_timeout_us(1000) == false) {
+                    printf("WARN: FLASH LOCKOUT END TIMEOUT\n");
+                }
+            }
+        }
 #endif
         mutex_exit(&mtx_flash);
     }
@@ -345,6 +367,10 @@ int flash_program_block(uintptr_t addr, const uint8_t *data, size_t len) {
 
     if (!data || len == 0) {
         return PICOKEYS_ERR_NULL_PARAM;
+    }
+    if ((addr & (FLASH_SECTOR_SIZE - 1)) + len > FLASH_SECTOR_SIZE) {
+        printf("ERROR: FLASH WRITE CROSSES SECTOR BOUNDARY\n");
+        return PICOKEYS_ERR_NO_MEMORY;
     }
 
     mutex_enter_blocking(&mtx_flash);
