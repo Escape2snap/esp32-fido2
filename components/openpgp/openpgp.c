@@ -491,6 +491,11 @@ int pin_reset_retries(const file_t *pin, bool force) {
         return PICOKEYS_ERR_BLOCKED;
     }
     uint8_t max_retries = file_get_data(pw_retries)[ret_idx];
+    if (retries == max_retries) {
+        /* Counter is already at its maximum: a successful VERIFY must not
+           trigger a flash rewrite (and the associated sync) every time. */
+        return PICOKEYS_OK;
+    }
     p[pw_idx] = max_retries;
     int r = file_put_data(pw_status, p, sz_pw);
     if (r == PICOKEYS_OK && !flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS)) {
