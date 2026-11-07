@@ -76,6 +76,7 @@ static int oath_unload(void);
 static int oath_migrate_secrets(void);
 
 static bool validated = true;
+static bool oath_auth_initialized = false;
 static bool oath_migration_done = false;
 static uint8_t challenge[CHALLENGE_LEN] = { 0 };
 static const uint8_t oath_secure_key_magic[] = { 'O', 'A', 'T', 'H' };
@@ -100,6 +101,12 @@ const uint8_t oath_aid[] = {
 static int oath_select(app_t *a, uint8_t force) {
     (void) force;
     if (cap_supported(CAP_OATH)) {
+        if (!oath_auth_initialized) {
+            /* A stored OATH password must protect the applet after reboot;
+               it used to default to "authenticated" until a command failed. */
+            validated = !file_has_data(file_search(EF_OATH_CODE));
+            oath_auth_initialized = true;
+        }
         int migration_ret = oath_migrate_secrets();
         if (migration_ret != PICOKEYS_OK) {
             return migration_ret;
@@ -1044,6 +1051,9 @@ static int cmd_rename(void) {
 
 static int cmd_get_credential(void) {
     tlv_ctx_t ctxi, name = { 0 };
+    if (validated == false) {
+        return SW_SECURITY_STATUS_NOT_SATISFIED();
+    }
     if (apdu.nc < 3) {
         return SW_INCORRECT_PARAMS();
     }
