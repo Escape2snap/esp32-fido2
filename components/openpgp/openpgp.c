@@ -63,6 +63,10 @@ char atr_openpgp[] = {
 
 int openpgp_process_apdu(void);
 
+/* Retry counters are security state: do not return 63Cx before the new
+   counter is committed to flash. */
+#define PIN_RETRY_COMMIT_TIMEOUT_MS 2000
+
 extern uint32_t board_button_read(void);
 
 bool wait_button_pressed_fid(uint16_t fid) {
@@ -358,6 +362,21 @@ int load_dek(void) {
             r = aes_decrypt_cfb_256(session_pwpiv, dek, dek + IV_SIZE, 32);
         }
     }
+    else if (has_rc) {
+        /* PUT DATA DO D3 stores the RC-wrapped DEK in EF_DEK (format 0x03 +
+           GCM payload).  Without this branch RESET RETRY COUNTER re-encrypted
+           the previous/stale DEK with the new PW1 and made the card
+           undecryptable. */
+        file_t *tf = file_search_by_fid(EF_DEK, NULL, SPECIFY_EF);
+        if (!tf || !file_has_data(tf)) {
+            return PICOKEYS_ERR_FILE_NOT_FOUND;
+        }
+        uint8_t *ef_data = file_get_data(tf);
+        if (ef_data[0] != 0x3) {
+            return PICOKEYS_ERR_NULL_PARAM;
+        }
+        r = decrypt_with_aad(session_rc, ef_data + 1, DEK_AAD_SIZE, PIN_KDF_DEFAULT_VERSION, dek);
+    }
     if (r != 0) {
         release_dek();
         return PICOKEYS_EXEC_ERROR;
@@ -463,15 +482,25 @@ int pin_reset_retries(const file_t *pin, bool force) {
         return PICOKEYS_ERR_MEMORY_FATAL;
     }
     uint8_t p[64];
+    if (sz_pw > sizeof(p)) {
+        return PICOKEYS_ERR_MEMORY_FATAL;
+    }
     memcpy(p, file_get_data(pw_status), sz_pw);
     uint8_t retries = p[pw_idx];
     if (retries == 0 && force == false) { //blocked
         return PICOKEYS_ERR_BLOCKED;
     }
     uint8_t max_retries = file_get_data(pw_retries)[ret_idx];
+    if (retries == max_retries) {
+        /* Counter is already at its maximum: a successful VERIFY must not
+           trigger a flash rewrite (and the associated sync) every time. */
+        return PICOKEYS_OK;
+    }
     p[pw_idx] = max_retries;
     int r = file_put_data(pw_status, p, sz_pw);
-    flash_commit();
+    if (r == PICOKEYS_OK && !flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS)) {
+        return PICOKEYS_EXEC_ERROR;
+    }
     return r;
 }
 
@@ -485,6 +514,9 @@ static int pin_wrong_retry(const file_t *pin) {
     }
     uint8_t p[64];
     uint16_t sz = file_get_size(pw_status);
+    if (sz > sizeof(p)) {
+        return PICOKEYS_ERR_MEMORY_FATAL;
+    }
     memcpy(p, file_get_data(pw_status), sz);
     int idx = 3 + (pin->fid & 0xf); /* DO C4: retry counters at offset 3+ */
     if (idx >= sz) {
@@ -496,7 +528,9 @@ static int pin_wrong_retry(const file_t *pin) {
         if (r != PICOKEYS_OK) {
             return r;
         }
-        flash_commit();
+        if (!flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS)) {
+            return PICOKEYS_EXEC_ERROR;
+        }
         if (p[idx] == 0) {
             return PICOKEYS_ERR_BLOCKED;
         }
@@ -720,6 +754,9 @@ int store_keys(void *key_ctx, int type, uint16_t key_id, bool use_kek) {
 int load_private_key_rsa(mbedtls_rsa_context *ctx, file_t *fkey, bool use_dek) {
     int key_size = file_get_size(fkey);
     uint8_t kdata[4096 / 8];
+    if (key_size <= 0 || key_size > (int)sizeof(kdata) || (key_size & 1) != 0) {
+        return PICOKEYS_WRONG_DATA;
+    }
     memcpy(kdata, file_get_data(fkey), key_size);
     if (use_dek && dek_decrypt(kdata, key_size) != 0) {
         return PICOKEYS_EXEC_ERROR;
@@ -754,6 +791,9 @@ int load_private_key_rsa(mbedtls_rsa_context *ctx, file_t *fkey, bool use_dek) {
 int load_private_key_ecdsa(mbedtls_ecp_keypair *ctx, file_t *fkey, bool use_dek) {
     int key_size = file_get_size(fkey);
     uint8_t kdata[67]; //Worst case, 521 bit + 1byte
+    if (key_size <= 1 || key_size > (int)sizeof(kdata)) {
+        return PICOKEYS_WRONG_DATA;
+    }
     memcpy(kdata, file_get_data(fkey), key_size);
     if (use_dek && dek_decrypt(kdata, key_size) != 0) {
         return PICOKEYS_EXEC_ERROR;
@@ -775,6 +815,11 @@ int load_private_key_ecdsa(mbedtls_ecp_keypair *ctx, file_t *fkey, bool use_dek)
 
 int load_aes_key(uint8_t *aes_key, file_t *fkey) {
     int key_size = file_get_size(fkey);
+    /* AES-128/192/256 are all valid here; callers provide a 32-byte
+       buffer, so reject anything larger than one AES-256 key. */
+    if (key_size != 16 && key_size != 24 && key_size != 32) {
+        return PICOKEYS_WRONG_DATA;
+    }
     memcpy(aes_key, file_get_data(fkey), key_size);
     if (dek_decrypt(aes_key, key_size) != 0) {
         return PICOKEYS_EXEC_ERROR;
@@ -996,6 +1041,12 @@ static const cmd_t cmds[] = {
 };
 
 int openpgp_process_apdu(void) {
+    if (card_terminated && INS(apdu) != 0x44) {
+        /* ACTIVATE FILE (0x44) is the only command allowed to revive a
+           terminated DF; everything else reports "selected file terminated
+           or invalidated" as required by ISO 7816-4. */
+        return set_res_sw(0x62, 0x85);
+    }
     sm_unwrap();
     for (const cmd_t *cmd = cmds; cmd->ins != 0x00; cmd++) {
         if (cmd->ins == INS(apdu)) {
