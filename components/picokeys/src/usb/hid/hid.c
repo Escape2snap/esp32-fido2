@@ -51,6 +51,11 @@ msg_packet_t msg_packet = { 0 };
 
 static uint16_t *send_buffer_size = NULL;
 static write_status_t *last_write_result = NULL;
+static uint32_t *last_write_start = NULL;
+
+/* A missing report-complete callback (host abort/reset) must not wedge the
+   HID transport forever. */
+#define HID_WRITE_TIMEOUT_MS 1000
 
 CTAPHID_FRAME *ctap_req = NULL, *ctap_resp = NULL;
 static void send_keepalive(void);
@@ -74,6 +79,9 @@ void hid_init(void) {
     if (last_write_result == NULL) {
         last_write_result = (write_status_t *)calloc(ITF_HID_TOTAL, sizeof(write_status_t));
     }
+    if (last_write_start == NULL) {
+        last_write_start = (uint32_t *)calloc(ITF_HID_TOTAL, sizeof(uint32_t));
+    }
     if (hid_rx == NULL) {
         hid_rx = (usb_buffer_t *)calloc(ITF_HID_TOTAL, sizeof(usb_buffer_t));
     }
@@ -91,11 +99,13 @@ int driver_init_hid(void) {
     }
 #endif
     ctap_req = (CTAPHID_FRAME *) (hid_rx[ITF_HID_CTAP].buffer + hid_rx[ITF_HID_CTAP].r_ptr);
-    apdu.header = ctap_req->init.data;
 
     ctap_resp = (CTAPHID_FRAME *) (hid_tx[ITF_HID_CTAP].buffer);
-    apdu.rdata = ctap_resp->init.data;
     memset(ctap_resp, 0, sizeof(CTAPHID_FRAME));
+    /* Do not touch the global APDU context here: this runs for every HID
+       packet (INIT/PING/CANCEL/CBOR) and would clobber an APDU that is
+       currently being executed on the other transport.  The APDU source
+       sets up apdu.rdata right before calling apdu_process(). */
 
     usb_set_timeout_counter(ITF_HID, 1500);
 
@@ -256,10 +266,21 @@ void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_
 
 int driver_write_hid(uint8_t itf, const uint8_t *buffer, uint16_t buffer_size) {
     if (last_write_result[itf] == WRITE_PENDING) {
-        return 0;
+        if (last_write_start != NULL &&
+            board_millis() - last_write_start[itf] < HID_WRITE_TIMEOUT_MS) {
+            return 0;
+        }
+        /* The completion callback never arrived: drop the stale transfer
+           state so the next frame can be queued. */
+        last_write_result[itf] = WRITE_FAILED;
+        hid_tx[itf].r_ptr = hid_tx[itf].w_ptr = 0;
+        send_buffer_size[itf] = 0;
     }
     bool r = tud_hid_n_report(itf, 0, buffer, buffer_size);
     last_write_result[itf] = r ? WRITE_PENDING : WRITE_FAILED;
+    if (last_write_result[itf] == WRITE_PENDING && last_write_start != NULL) {
+        last_write_start[itf] = board_millis();
+    }
     if (last_write_result[itf] == WRITE_FAILED) {
         return 0;
     }
@@ -443,6 +464,11 @@ int driver_process_usb_packet_hid(uint16_t read) {
                  (msg_packet.len == 0 ||
                   (msg_packet.len == msg_packet.current_len && msg_packet.len > 0))) {
             if (msg_packet.current_len == msg_packet.len && msg_packet.len > 0) {
+                /* The echo is copied into the 2048-byte HID TX buffer at
+                   offset 7; CTAPHID messages may be much larger. */
+                if (msg_packet.len > USB_BUFFER_SIZE - 7) {
+                    return ctap_error(CTAP1_ERR_INVALID_LEN);
+                }
                 memcpy(ctap_resp->init.data, msg_packet.data, msg_packet.len);
                 driver_exec_finished_hid(msg_packet.len);
             }
@@ -515,6 +541,9 @@ int driver_process_usb_packet_hid(uint16_t read) {
             }
 
             thread_type = 1;
+            /* CTAPHID_MSG/OTP carry an ISO 7816 APDU; the applet writes its
+               response into the HID TX frame payload. */
+            apdu.rdata = ctap_resp->init.data;
 
             if (msg_packet.current_len == msg_packet.len && msg_packet.len > 0) {
                 apdu_sent = apdu_process(ITF_HID_CTAP, APDU_SRC_HID, msg_packet.data, msg_packet.len);
