@@ -749,6 +749,9 @@ int store_keys(void *key_ctx, int type, uint16_t key_id, bool use_kek) {
 int load_private_key_rsa(mbedtls_rsa_context *ctx, file_t *fkey, bool use_dek) {
     int key_size = file_get_size(fkey);
     uint8_t kdata[4096 / 8];
+    if (key_size <= 0 || key_size > (int)sizeof(kdata) || (key_size & 1) != 0) {
+        return PICOKEYS_WRONG_DATA;
+    }
     memcpy(kdata, file_get_data(fkey), key_size);
     if (use_dek && dek_decrypt(kdata, key_size) != 0) {
         return PICOKEYS_EXEC_ERROR;
@@ -783,6 +786,9 @@ int load_private_key_rsa(mbedtls_rsa_context *ctx, file_t *fkey, bool use_dek) {
 int load_private_key_ecdsa(mbedtls_ecp_keypair *ctx, file_t *fkey, bool use_dek) {
     int key_size = file_get_size(fkey);
     uint8_t kdata[67]; //Worst case, 521 bit + 1byte
+    if (key_size <= 1 || key_size > (int)sizeof(kdata)) {
+        return PICOKEYS_WRONG_DATA;
+    }
     memcpy(kdata, file_get_data(fkey), key_size);
     if (use_dek && dek_decrypt(kdata, key_size) != 0) {
         return PICOKEYS_EXEC_ERROR;
@@ -804,6 +810,9 @@ int load_private_key_ecdsa(mbedtls_ecp_keypair *ctx, file_t *fkey, bool use_dek)
 
 int load_aes_key(uint8_t *aes_key, file_t *fkey) {
     int key_size = file_get_size(fkey);
+    if (key_size != 32) {
+        return PICOKEYS_WRONG_DATA;
+    }
     memcpy(aes_key, file_get_data(fkey), key_size);
     if (dek_decrypt(aes_key, key_size) != 0) {
         return PICOKEYS_EXEC_ERROR;
