@@ -194,7 +194,10 @@ int cmd_pso(void) {
                 mbedtls_ecdh_free(&ctx);
                 return SW_DATA_INVALID();
             }
-            r = mbedtls_ecdh_read_public(&ctx, data - 1, len + 1);
+            /* mbedtls_asn1_get_tag() leaves data at the point contents.  The
+               previous data-1/len+1 passed the DER length byte as the SEC1
+               point prefix, so ECDH always failed. */
+            r = mbedtls_ecdh_read_public(&ctx, data, len);
             if (r != 0) {
                 mbedtls_ecdh_free(&ctx);
                 return SW_DATA_INVALID();
