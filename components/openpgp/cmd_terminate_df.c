@@ -31,7 +31,8 @@ int cmd_terminate_df(void) {
     if (apdu.nc != 0) {
         return SW_WRONG_LENGTH();
     }
-    file_initialize_flash(true);
-    scan_files_openpgp();
+    /* OpenPGP Card v3.4 §7.2.16: termination is a DF lifecycle state, not a
+       factory reset.  Only ACTIVATE FILE or a reset may clear it. */
+    card_terminated = true;
     return SW_OK();
 }

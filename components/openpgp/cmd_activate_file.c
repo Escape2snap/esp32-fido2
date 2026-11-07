@@ -24,7 +24,9 @@ int cmd_activate_file(void) {
     if (apdu.nc != 0) {
         return SW_WRONG_LENGTH();
     }
-    file_initialize_flash(true);
-    scan_files_openpgp();
+    /* OpenPGP Card v3.4 §7.2.15: ACTIVATE FILE only re-activates a DF that
+       was terminated with TERMINATE DF.  It must never erase the shared
+       flash pool (FIDO credentials, PIV keys, OpenPGP keys). */
+    card_terminated = false;
     return SW_OK();
 }

@@ -996,6 +996,12 @@ static const cmd_t cmds[] = {
 };
 
 int openpgp_process_apdu(void) {
+    if (card_terminated && INS(apdu) != 0x44) {
+        /* ACTIVATE FILE (0x44) is the only command allowed to revive a
+           terminated DF; everything else reports "selected file terminated
+           or invalidated" as required by ISO 7816-4. */
+        return set_res_sw(0x62, 0x85);
+    }
     sm_unwrap();
     for (const cmd_t *cmd = cmds; cmd->ins != 0x00; cmd++) {
         if (cmd->ins == INS(apdu)) {
