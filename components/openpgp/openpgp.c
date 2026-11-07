@@ -810,7 +810,9 @@ int load_private_key_ecdsa(mbedtls_ecp_keypair *ctx, file_t *fkey, bool use_dek)
 
 int load_aes_key(uint8_t *aes_key, file_t *fkey) {
     int key_size = file_get_size(fkey);
-    if (key_size != 32) {
+    /* AES-128/192/256 are all valid here; callers provide a 32-byte
+       buffer, so reject anything larger than one AES-256 key. */
+    if (key_size != 16 && key_size != 24 && key_size != 32) {
         return PICOKEYS_WRONG_DATA;
     }
     memcpy(aes_key, file_get_data(fkey), key_size);
