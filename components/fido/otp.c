@@ -551,7 +551,10 @@ static int cmd_otp(void) {
                 status_byte = 0x20;
                 otp_status(_is_otp);
 #ifndef ENABLE_EMULATION
-                if (button_wait()) {
+                /* Runs on core 1: ask core 0 for user presence through the
+                   queue.  button_wait() polls and calls execute_tasks(),
+                   which is not safe from the applet thread. */
+                if (wait_button_pressed() != 0) {
                     status_byte = 0x00;
                     otp_status(_is_otp);
                     return SW_CONDITIONS_NOT_SATISFIED();
