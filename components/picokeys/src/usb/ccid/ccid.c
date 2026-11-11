@@ -397,6 +397,10 @@ static void ccid_init_cb(void) {
 
 static void ccid_reset_cb(uint8_t rhport) {
     itf_num = 0;
+    /* A USB reset powers the card off; do not keep a stale "active"
+       status or mounted LED from the previous enumeration. */
+    ccid_status = 1;
+    led_set_mode(MODE_NOT_MOUNTED);
     vendord_reset(rhport);
 }
 
