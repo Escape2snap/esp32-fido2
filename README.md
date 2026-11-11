@@ -6,7 +6,7 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 
 - **FIDO2 / CTAP 2.1** — WebAuthn, U2F, passwordless authentication ✅
 - **OpenPGP card v3.4** — GnuPG, SSH, S/MIME, smartcard operations ✅
-- **OATH / OTP** *(in progress)* — TOTP/HOTP, Yubico OTP 🚧
+- **OATH TOTP/HOTP** ✅ — Yubico OTP 🚧
 
 > Standalone ESP-IDF project optimized for **ESP32-S3**.
 > No Raspberry Pi Pico or cross-platform logic.
@@ -29,7 +29,7 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 | Credential management | ✅ |
 | Enterprise attestation | ✅ |
 | ECDSA (P-256, P-384, P-521, secp256k1) | ✅ |
-| OATH TOTP/HOTP | 🚧 |
+| OATH TOTP/HOTP | ✅ |
 | Yubico OTP | 🚧 |
 
 ### OpenPGP Smartcard
@@ -40,8 +40,8 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 | 3 key slots (SIG, DEC, AUT) | ✅ |
 | RSA 2048/3072/4096 | ✅ |
 | ECDSA (P-256, P-384, P-521, secp256k1) | ✅ |
-| Brainpool (256r1, 384r1, 512r1) | ✅ |
-| Curve25519 (X25519 ECDH) | ✅ |
+| Brainpool (256r1, 384r1, 512r1) | ⚠️ software fallback |
+| Curve25519 (X25519 ECDH, feat/ed25519) | 🚧 |
 | Ed25519 (EdDSA, feat/ed25519) | 🚧 |
 | On-device key generation | ✅ |
 | Key import/export (PUT DATA, IMPORT DATA) | ✅ |
@@ -242,24 +242,27 @@ for dev in CtapHidDevice.list_devices():
 | Feature | Linux | Windows |
 |---------|-------|---------|
 | FIDO2 | ✅ | ✅ |
-| OpenPGP (CCID) | ✅ | ✅ (may need retry on first connection) |
+| OpenPGP (CCID) | ✅ | ✅ |
 
-On **Windows**, the composite CCID+HID device may need 1–3 connection attempts
-before the smartcard driver fully enumerates. This is a known timing issue with
-Windows `usbccgp.sys` handling of multi-interface HID+CCID devices.
-A 100ms startup delay is built into the firmware to minimize this.
+On **Windows**, the composite CCID+HID device may require a reconnect after
+the first enumeration while `usbccgp.sys` binds both interfaces. A 100ms
+startup delay is built into the firmware. The CCID descriptor keeps the
+compatibility `dwFeatures` value `0x40840`; bit `0x40` must remain set
+(see PR #51). Removing it makes Windows PC/SC report
+`SCARD_E_PROTO_MISMATCH`.
 
 ### Known Limitations
 
-- **Brainpool curves:** ESP32-S3 HW ECC accelerator does not support
-  brainpool curves. Key generation and signing will fail. Use NIST P-256/P-384
-  or Curve 25519 instead.
+- **Brainpool curves:** ESP32-S3 HW ECC acceleration is limited to NIST
+  curves. Brainpool uses the mbedTLS software fallback (enabled in
+  `sdkconfig`), so key generation/signing work but are slower and may hit
+  PC/SC timeouts. Prefer NIST P-256/P-384.
 - **GPG key-attr:** On first key generation with default P-384, GPG on Windows
   may report `Zero prefix in S-expression`. Run `key-attr` once before
   `generate` to initialize the algorithm attributes.
-- **CCID+HID coexistence:** Windows `usbccgp.sys` handles CCID and HID
-  interfaces better on reboot. If the smartcard reader doesn't appear,
-  reconnect the device.
+- **CCID+HID coexistence:** Windows may require a reconnect after the first
+  enumeration. The `SCARD_E_PROTO_MISMATCH` regression from PR #47 was fixed
+  in PR #51 by restoring `dwFeatures = 0x40840`; do not remove bit `0x40`.
 - **P-384 key generation is slow:** On ESP32-S3, P-384 ECDSA/ECDH key
   generation using software mbedtls_mpi can take 10+ seconds. The Task
   WDT will trigger but the operation completes. Stick to P-256 or Ed25519
@@ -274,7 +277,15 @@ A 100ms startup delay is built into the firmware to minimize this.
 ## Fix History
 
 A complete changelog with root-cause analyses can be found in
-[`HISTORY.md`](HISTORY.md). It covers PRs #24 through #45.
+[`HISTORY.md`](HISTORY.md). It covers PRs #24 through #45. Recent fixes:
+- #47: USB transport/APDU routing; its CCID `dwFeatures` change was reverted in #51.
+- #48: FIDO2/OATH bounds checks and PIN handling.
+- #49: OpenPGP v3.4 lifecycle, DEK, PIN retry, ECDH and key handling.
+- #50: RNG, flash mapping, OTP user presence and build hardening.
+- #51: restore CCID `dwFeatures = 0x40840` for Windows PC/SC.
+
+PR #47 introduced a CCID `dwFeatures` regression that was fixed in PR #51;
+do not remove the `0x40` compatibility bit again.
 
 ---
 
@@ -422,38 +433,23 @@ If the firmware is tampered with, the chip refuses to boot.
 - **Recovery impossible**: There is no backdoor, no recovery mode, and no
   debug override.
 
-**Enable only if you accept the risk:**
-
-```bash
-# 1. Generate signing key (BACK THIS UP SAFELY)
-espsecure.py generate_signing_key secure_boot_signing_key.pem
-
-# 2. Sign the firmware binary
-espsecure.py sign_data --keyfile secure_boot_signing_key.pem \
-  --version 2 build/esp32_fido2.bin
-
-# 3. Flash normally
-idf.py -p /dev/ttyACM0 flash
-
-# 4. Burn the signing key to eFuse and enable Secure Boot
-#    ⚠️ THIS IS PERMANENT — READ ESP-IDF DOCS FIRST
-espefuse.py -p /dev/ttyACM0 burn_key secure_boot \
-  secure_boot_signing_key.pem
-
-# 5. Verify
-espefuse.py -p /dev/ttyACM0 summary
-```
+**ESP32-S3 uses Secure Boot v2.** Do not use generic
+`espefuse.py burn_key secure_boot` instructions (those apply to older
+ESP32 Secure Boot v1 flows). Use the ESP-IDF Secure Boot v2 workflow:
+generate and back up a signing key offline, enable `CONFIG_SECURE_BOOT`,
+sign the bootloader and application, burn only the public key digest,
+then enable Secure Boot and verify with `espefuse.py summary`.
 
 See the [ESP-IDF Secure Boot
 documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/security/secure-boot.html)
-for detailed instructions.
+for the exact commands. This is irreversible; a lost signing key makes
+firmware updates impossible.
 
-### CVE-27840
+### Secure Boot limitations
 
-ESP32 (all variants including ESP32-S3) has a known Secure Boot bypass
-vulnerability (CVE-27840). For high-assurance deployments, consider
-RP2350-based alternatives which have a more robust secure boot
-implementation.
+ESP32 silicon has had published Secure Boot bypasses. Check the current
+Espressif security advisories for your chip revision. For high-assurance
+deployments, evaluate newer MCUs with a more robust secure boot design.
 
 ---
 
