@@ -63,6 +63,7 @@
 #define CCID_CMD_STATUS_TIMEEXT 0x80
 
 #define CCID_ERROR_XFR_OVERRUN  0xFC
+#define CCID_ERROR_PROTOCOL_NOT_SUPPORTED 0x07
 
 /*
  * Since command-byte is at offset 0,
@@ -264,9 +265,12 @@ int driver_process_usb_packet_ccid(uint8_t itf, uint16_t rx_read) {
                 ccid_resp_fast[itf]->bSlot = 0;
                 ccid_resp_fast[itf]->bSeq = ccid_header[itf]->bSeq;
                 ccid_resp_fast[itf]->abRFU0 = 0;
-                ccid_resp_fast[itf]->abRFU1 = 0;
-                //printf("1 %x %x %x || %x %x %x\n",ccid_resp_fast->apdu,apdu.rdata,ccid_resp_fast,ccid_header,ccid_header->apdu,apdu.data);
-                memcpy(&ccid_resp_fast[itf]->apdu, ccid_atr + 1, size_atr);
+                /* RDR_to_PC_DataBlock: byte 8 is bError, byte 9 is
+                   bProtocolNum.  The OpenPGP ATR is T=1, so report T=1. */
+                ccid_resp_fast[itf]->abRFU1 = 0x0100;
+                if (ccid_atr) {
+                    memcpy(&ccid_resp_fast[itf]->apdu, ccid_atr + 1, size_atr);
+                }
                 if (ccid_status == 1) {
                     //card_start(apdu_thread);
                 }
@@ -303,14 +307,29 @@ int driver_process_usb_packet_ccid(uint8_t itf, uint16_t rx_read) {
                     0xFE, /* bIFSC */
                     0    /* bNadValue */
                 };
+                bool proto_ok = true;
+                if (ccid_header[itf]->bMessageType == CCID_SET_PARAMS) {
+                    /* PC_to_RDR_SetParameters puts the requested protocol
+                       at offset 7 (abRFU0 in this packed header). */
+                    if (ccid_header[itf]->abRFU0 != 1 ||
+                        ccid_header[itf]->dwLength != sizeof(params)) {
+                        proto_ok = false;
+                    }
+                }
                 ccid_resp_fast[itf]->bMessageType = CCID_PARAMS_RET;
-                ccid_resp_fast[itf]->dwLength = sizeof(params);
+                ccid_resp_fast[itf]->dwLength = proto_ok ? sizeof(params) : 0;
                 ccid_resp_fast[itf]->bSlot = 0;
                 ccid_resp_fast[itf]->bSeq = ccid_header[itf]->bSeq;
                 ccid_resp_fast[itf]->abRFU0 = ccid_status;
-                ccid_resp_fast[itf]->abRFU1 = 0x0100;
-                memcpy(&ccid_resp_fast[itf]->apdu, params, sizeof(params));
-                ccid_write_fast(itf, (const uint8_t *)ccid_resp_fast[itf], sizeof(params) + 10);
+                /* bError in the low byte, bProtocolNum (T=1) in the high byte. */
+                ccid_resp_fast[itf]->abRFU1 = proto_ok
+                    ? 0x0100
+                    : (uint16_t)((1u << 8) | CCID_ERROR_PROTOCOL_NOT_SUPPORTED);
+                if (proto_ok) {
+                    memcpy(&ccid_resp_fast[itf]->apdu, params, sizeof(params));
+                }
+                ccid_write_fast(itf, (const uint8_t *)ccid_resp_fast[itf],
+                                (uint16_t)((proto_ok ? sizeof(params) : 0) + 10));
             }
             else if (ccid_header[itf]->bMessageType == CCID_SETDATARATEANDCLOCKFREQUENCY) {
                 ccid_resp_fast[itf]->bMessageType = CCID_SETDATARATEANDCLOCKFREQUENCY_RET;

@@ -141,6 +141,9 @@ enum
 };
 
 #ifdef USB_ITF_CCID
+/* dwFeatures 0x40840 is a compatibility value required by Windows usbccid.
+   Bit 0x40 (automatic parameter negotiation) must stay set; removing it
+   makes PC/SC negotiate parameters and fail with SCARD_E_PROTO_MISMATCH. */
 #define TUD_SMARTCARD_DESCRIPTOR_WEB(_itf, _strix, _epout, _epin, _epsize) \
     9, TUSB_DESC_INTERFACE, _itf, 0, 2, 0xFF, 0, 0, _strix, \
     TUSB_WSMARTCARD_LEN, 0x21, U16_TO_U8S_LE(0x0110), 0, 0x1, U32_TO_U8S_LE(0x01|0x2), U32_TO_U8S_LE(0xDFC), U32_TO_U8S_LE(0xDFC), 0, U32_TO_U8S_LE(0x2580), U32_TO_U8S_LE(0x2580), 0, U32_TO_U8S_LE(0xFE), U32_TO_U8S_LE(0), U32_TO_U8S_LE(0), U32_TO_U8S_LE(0x40840), U32_TO_U8S_LE(USB_BUFFER_SIZE), 0xFF, 0xFF, U16_TO_U8S_LE(0x0), 0, \
