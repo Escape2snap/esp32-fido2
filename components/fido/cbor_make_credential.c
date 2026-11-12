@@ -139,9 +139,6 @@ int cbor_make_credential(const uint8_t *data, size_t len) {
                             }
                             CBOR_FIELD_GET_TEXT(pc->transports[pc->transports_len], 4);
                             pc->transports_len++;
-                            if (pc->transports_len >= 8) {
-                                CBOR_ERROR(CTAP2_ERR_CBOR_UNEXPECTED_TYPE);
-                            }
                         }
                         CBOR_PARSE_ARRAY_END(_f3, 4);
                     }

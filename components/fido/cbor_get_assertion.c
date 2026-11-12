@@ -139,9 +139,6 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
                             }
                             CBOR_FIELD_GET_TEXT(pc->transports[pc->transports_len], 4);
                             pc->transports_len++;
-                            if (pc->transports_len >= 8) {
-                                CBOR_ERROR(CTAP2_ERR_CBOR_UNEXPECTED_TYPE);
-                            }
                         }
                         CBOR_PARSE_ARRAY_END(_f3, 4);
                     }
