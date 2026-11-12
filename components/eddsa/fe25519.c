@@ -32,32 +32,35 @@ __attribute__((unused)) static void carry_propagate(uint32_t r[16]) {
     /* limb 15 may exceed 32 bits; reduce modulo 2^255-19 below */
 }
 
-/* Fully reduce r[8] mod p (r may be up to ~ 2*p - 1). */
+/* Constants of p = 2^255 - 19, little-endian 32-bit limbs. */
+static const uint32_t fe25519_p[8] = {
+    0xffffffedU, 0xffffffffU, 0xffffffffU, 0xffffffffU,
+    0xffffffffU, 0xffffffffU, 0xffffffffU, 0x7fffffffU
+};
+
+static int fe25519_ge_p(const uint32_t r[8]) {
+    for (int i = 7; i >= 0; i--) {
+        if (r[i] > fe25519_p[i]) return 1;
+        if (r[i] < fe25519_p[i]) return 0;
+    }
+    return 1;
+}
+
+static void fe25519_sub_p(uint32_t r[8]) {
+    uint64_t t;
+    uint32_t borrow = 0;
+    for (int i = 0; i < 8; i++) {
+        t = (uint64_t)r[i] - fe25519_p[i] - borrow;
+        r[i] = (uint32_t)t;
+        borrow = (uint32_t)((t >> 32) & 1);
+    }
+}
+
+/* Fully reduce r[8] mod p.  Products can be several times p before this
+   call, so subtract p until the value is canonical. */
 static void fe25519_fully_reduce(uint32_t r[8]) {
-    /* Subtract p repeatedly if r >= p.  At most 2 subtractions needed. */
-    uint32_t borrow;
-    /* First subtraction: r = r - p */
-    uint64_t tmp;
-    tmp = (uint64_t)r[0] - 0xffffffedULL;  borrow = (tmp >> 32) & 1; r[0] = (uint32_t)tmp;
-    tmp = (uint64_t)r[1] - 0xffffffffULL - borrow; borrow = (tmp >> 32) & 1; r[1] = (uint32_t)tmp;
-    tmp = (uint64_t)r[2] - 0xffffffffULL - borrow; borrow = (tmp >> 32) & 1; r[2] = (uint32_t)tmp;
-    tmp = (uint64_t)r[3] - 0xffffffffULL - borrow; borrow = (tmp >> 32) & 1; r[3] = (uint32_t)tmp;
-    tmp = (uint64_t)r[4] - 0xffffffffULL - borrow; borrow = (tmp >> 32) & 1; r[4] = (uint32_t)tmp;
-    tmp = (uint64_t)r[5] - 0xffffffffULL - borrow; borrow = (tmp >> 32) & 1; r[5] = (uint32_t)tmp;
-    tmp = (uint64_t)r[6] - 0xffffffffULL - borrow; borrow = (tmp >> 32) & 1; r[6] = (uint32_t)tmp;
-    tmp = (uint64_t)r[7] - 0x7fffffffULL - borrow; borrow = (tmp >> 32) & 1; r[7] = (uint32_t)tmp;
-    /* If borrow == 0, r was >= p and we keep it; otherwise add p back */
-    if (borrow) {
-        /* r = r + p */
-        uint32_t carry;
-        tmp = (uint64_t)r[0] + 0xffffffedULL;  carry = (uint32_t)(tmp >> 32); r[0] = (uint32_t)tmp;
-        tmp = (uint64_t)r[1] + 0xffffffffULL + carry; carry = (uint32_t)(tmp >> 32); r[1] = (uint32_t)tmp;
-        tmp = (uint64_t)r[2] + 0xffffffffULL + carry; carry = (uint32_t)(tmp >> 32); r[2] = (uint32_t)tmp;
-        tmp = (uint64_t)r[3] + 0xffffffffULL + carry; carry = (uint32_t)(tmp >> 32); r[3] = (uint32_t)tmp;
-        tmp = (uint64_t)r[4] + 0xffffffffULL + carry; carry = (uint32_t)(tmp >> 32); r[4] = (uint32_t)tmp;
-        tmp = (uint64_t)r[5] + 0xffffffffULL + carry; carry = (uint32_t)(tmp >> 32); r[5] = (uint32_t)tmp;
-        tmp = (uint64_t)r[6] + 0xffffffffULL + carry; carry = (uint32_t)(tmp >> 32); r[6] = (uint32_t)tmp;
-        tmp = (uint64_t)r[7] + 0x7fffffffULL + carry; r[7] = (uint32_t)tmp;
+    while (fe25519_ge_p(r)) {
+        fe25519_sub_p(r);
     }
 }
 
@@ -125,27 +128,23 @@ void fe25519_add(fe25519 *r, const fe25519 *a, const fe25519 *b) {
     uint64_t t;
     uint32_t c = 0;
     uint32_t out[8];
-    t = (uint64_t)a->v[0] + b->v[0]; out[0] = (uint32_t)t; c = (uint32_t)(t >> 32);
-    t = (uint64_t)a->v[1] + b->v[1] + c; out[1] = (uint32_t)t; c = (uint32_t)(t >> 32);
-    t = (uint64_t)a->v[2] + b->v[2] + c; out[2] = (uint32_t)t; c = (uint32_t)(t >> 32);
-    t = (uint64_t)a->v[3] + b->v[3] + c; out[3] = (uint32_t)t; c = (uint32_t)(t >> 32);
-    t = (uint64_t)a->v[4] + b->v[4] + c; out[4] = (uint32_t)t; c = (uint32_t)(t >> 32);
-    t = (uint64_t)a->v[5] + b->v[5] + c; out[5] = (uint32_t)t; c = (uint32_t)(t >> 32);
-    t = (uint64_t)a->v[6] + b->v[6] + c; out[6] = (uint32_t)t; c = (uint32_t)(t >> 32);
-    t = (uint64_t)a->v[7] + b->v[7] + c; out[7] = (uint32_t)t; /* c ignored here — handled by full reduce */
-    /* Reduce: if c (the carry out of the top limb) is 1, add back 19 (the
-     * reduction equivalent of 2^255) and propagate, then conditionally sub p. */
+    for (int i = 0; i < 8; i++) {
+        t = (uint64_t)a->v[i] + b->v[i] + c;
+        out[i] = (uint32_t)t;
+        c = (uint32_t)(t >> 32);
+    }
+    /* A carry out of limb 7 means the sum wrapped past 2^256.  Add 19
+       (since 2^256 ≡ 38 ≡ 19 + 19? — 2^255 ≡ 19, so 2^256 ≡ 38) and
+       propagate.  For canonical inputs (< p) this cannot happen; keep
+       the branch for robustness. */
     if (c) {
-        /* r = r + 19 (since c * 2^255 ≡ c * 19 mod p) */
         uint32_t carry = 0;
-        t = (uint64_t)out[0] + 19; out[0] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        t = (uint64_t)out[1] + carry; out[1] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        t = (uint64_t)out[2] + carry; out[2] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        t = (uint64_t)out[3] + carry; out[3] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        t = (uint64_t)out[4] + carry; out[4] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        t = (uint64_t)out[5] + carry; out[5] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        t = (uint64_t)out[6] + carry; out[6] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        t = (uint64_t)out[7] + carry; out[7] = (uint32_t)t;
+        t = (uint64_t)out[0] + 38;
+        out[0] = (uint32_t)t; carry = (uint32_t)(t >> 32);
+        for (int i = 1; i < 8; i++) {
+            t = (uint64_t)out[i] + carry;
+            out[i] = (uint32_t)t; carry = (uint32_t)(t >> 32);
+        }
     }
     memcpy(r->v, out, 32);
     fe25519_fully_reduce(r->v);
@@ -164,6 +163,7 @@ void fe25519_sub(fe25519 *r, const fe25519 *a, const fe25519 *b) {
     t = (uint64_t)a->v[5] - (uint64_t)b->v[5] - borrow; out[5] = (uint32_t)t; borrow = (t >> 63) & 1;
     t = (uint64_t)a->v[6] - (uint64_t)b->v[6] - borrow; out[6] = (uint32_t)t; borrow = (t >> 63) & 1;
     t = (uint64_t)a->v[7] - (uint64_t)b->v[7] - borrow; out[7] = (uint32_t)t;
+    borrow = (t >> 63) & 1;
     if (borrow) {
         /* Add back p: result was negative */
         uint32_t carry = 0;
@@ -210,18 +210,18 @@ void fe25519_mul(fe25519 *r, const fe25519 *a, const fe25519 *b) {
         p[i]     = t & 0xffffffffULL;
         p[i + 1] += t >> 32;
     }
-    /* Reduction: p = p[0:7] + 19 * p[8:15] (since 2^255 ≡ 19 mod p) */
+    /* Reduction: p[8:15] is at 2^256, and 2^256 ≡ 38 mod p
+       (since 2^255 ≡ 19).  Do not use 19 here. */
     uint64_t r0[8];
     uint64_t carry = 0;
     for (int i = 0; i < 8; i++) {
-        uint64_t t = p[i] + (uint64_t)p[i + 8] * 19 + carry;
+        uint64_t t = p[i] + (uint64_t)p[i + 8] * 38 + carry;
         r0[i] = t & 0xffffffffULL;
         carry = t >> 32;
     }
-    /* Handle top carry: carry is at most 19 * 0xffffffff + carry from last addition */
-    /* Add carry * 19 to r0[0] and propagate */
+    /* Handle the carry out of the 2^256 position: multiply by 38. */
     if (carry) {
-        uint64_t t = r0[0] + carry * 19;
+        uint64_t t = r0[0] + carry * 38;
         r0[0] = t & 0xffffffffULL;
         carry = t >> 32;
         for (int i = 1; i < 8 && carry; i++) {
@@ -235,49 +235,12 @@ void fe25519_mul(fe25519 *r, const fe25519 *a, const fe25519 *b) {
 }
 
 /* ----------------------------------------------------------------- */
-/*  Squaring (optimized)                                              */
+/*  Squaring                                                          */
+/*  Use the multiplication path for correctness; a dedicated square   */
+/*  can be added later once it is covered by test vectors.            */
 /* ----------------------------------------------------------------- */
 void fe25519_sq(fe25519 *r, const fe25519 *a) {
-    uint64_t p[16] = { 0 };
-    for (int i = 0; i < 8; i++) {
-        /* Diagonal: i == j */
-        uint64_t t = p[2 * i] + (uint64_t)a->v[i] * a->v[i];
-        p[2 * i] = t & 0xffffffffULL;
-        uint64_t carry = t >> 32;
-        for (int j = i + 1; j < 8; j++) {
-            uint64_t prod = (uint64_t)a->v[i] * a->v[j];
-            t = p[i + j] + 2 * prod + carry;
-            p[i + j] = t & 0xffffffffULL;
-            carry = t >> 32;
-        }
-        p[i + 8] = carry;
-    }
-    /* Carry propagate */
-    for (int i = 0; i < 15; i++) {
-        uint64_t t = p[i];
-        p[i]     = t & 0xffffffffULL;
-        p[i + 1] += t >> 32;
-    }
-    /* Reduction */
-    uint64_t r0[8];
-    uint64_t carry = 0;
-    for (int i = 0; i < 8; i++) {
-        uint64_t t = p[i] + (uint64_t)p[i + 8] * 19 + carry;
-        r0[i] = t & 0xffffffffULL;
-        carry = t >> 32;
-    }
-    if (carry) {
-        uint64_t t = r0[0] + carry * 19;
-        r0[0] = t & 0xffffffffULL;
-        carry = t >> 32;
-        for (int i = 1; i < 8 && carry; i++) {
-            t = r0[i] + carry;
-            r0[i] = t & 0xffffffffULL;
-            carry = t >> 32;
-        }
-    }
-    for (int i = 0; i < 8; i++) r->v[i] = (uint32_t)r0[i];
-    fe25519_fully_reduce(r->v);
+    fe25519_mul(r, a, a);
 }
 
 /* ----------------------------------------------------------------- */
@@ -285,58 +248,22 @@ void fe25519_sq(fe25519 *r, const fe25519 *a) {
 /*  p - 2 = 2^255 - 21 = 0x7fffffff...ed - 1                          */
 /* ----------------------------------------------------------------- */
 void fe25519_invert(fe25519 *r, const fe25519 *a) {
-    fe25519 t1, t2, t3, t4, t5;
-    int i;
-
-    fe25519_copy(&t1, a);
-
-    /* Compute a^2 */
-    fe25519_sq(&t2, &t1);
-    fe25519_mul(&t1, &t1, &t2);  /* t1 = a^3 */
-
-    fe25519_sq(&t2, &t1); fe25519_mul(&t2, &t2, a);      /* a^7 */
-    fe25519_sq(&t3, &t2); fe25519_sq(&t3, &t3); fe25519_mul(&t3, &t3, &t2); /* a^15 */
-
-    fe25519_copy(&t4, &t3);
-    for (i = 0; i < 4; i++) { fe25519_sq(&t4, &t4); }
-    fe25519_mul(&t4, &t4, &t3);  /* a^(2^8 - 1) */
-
-    fe25519_copy(&t5, &t4);
-    for (i = 0; i < 8; i++) { fe25519_sq(&t5, &t5); }
-    fe25519_mul(&t5, &t5, &t4);  /* a^(2^16 - 1) */
-
-    fe25519_copy(&t4, &t5);
-    for (i = 0; i < 16; i++) { fe25519_sq(&t4, &t4); }
-    fe25519_mul(&t4, &t4, &t5);  /* a^(2^32 - 1) */
-
-    fe25519_copy(&t5, &t4);
-    for (i = 0; i < 32; i++) { fe25519_sq(&t5, &t5); }
-    fe25519_mul(&t5, &t5, &t4);  /* a^(2^64 - 1) */
-
-    fe25519_copy(&t4, &t5);
-    for (i = 0; i < 64; i++) { fe25519_sq(&t4, &t4); }
-    fe25519_mul(&t4, &t4, &t5);  /* a^(2^128 - 1) */
-
-    for (i = 0; i < 64; i++) { fe25519_sq(&t4, &t4); }
-    fe25519_mul(&t4, &t4, &t5);  /* a^(2^192 - 1) */
-
-    for (i = 0; i < 32; i++) { fe25519_sq(&t4, &t4); }
-    fe25519_mul(&t4, &t4, &t5);  /* a^(2^224 - 1) */
-
-    for (i = 0; i < 16; i++) { fe25519_sq(&t4, &t4); }
-    fe25519_mul(&t4, &t4, &t5);  /* a^(2^240 - 1) */
-
-    for (i = 0; i < 8; i++) { fe25519_sq(&t4, &t4); }
-    fe25519_mul(&t4, &t4, &t3);  /* a^(2^248 - 1) */
-
-    for (i = 0; i < 4; i++) { fe25519_sq(&t4, &t4); }
-    fe25519_mul(&t4, &t4, &t2);  /* a^(2^252 - 1) */
-
-    for (i = 0; i < 2; i++) { fe25519_sq(&t4, &t4); }
-    fe25519_mul(&t4, &t4, &t1);  /* a^(2^254 - 1) */
-
-    fe25519_sq(&t4, &t4);         /* a^(2^255 - 2) = a^{p-2} mod p */
-    fe25519_sq(&t4, &t4);         /* a^(2^256 - 4) ... */
-    fe25519_mul(r, &t4, a);
-    /* Final result = a^(2^255 - 21) which is a^{p-2} */
+    /* p - 2 = 2^255 - 21 = 0x7fff...ffeb (little-endian limbs).  Use a
+       straightforward fixed-exponent square-and-multiply chain: it is
+       slower than the ref10 chain, but the exponent is public and the
+       implementation is easy to verify. */
+    static const uint32_t exp[8] = {
+        0xffffffebU, 0xffffffffU, 0xffffffffU, 0xffffffffU,
+        0xffffffffU, 0xffffffffU, 0xffffffffU, 0x7fffffffU
+    };
+    fe25519 result, base;
+    fe25519_set_one(&result);
+    fe25519_copy(&base, a);
+    for (int i = 254; i >= 0; i--) {
+        fe25519_sq(&result, &result);
+        if ((exp[i >> 5] >> (i & 31)) & 1U) {
+            fe25519_mul(&result, &result, &base);
+        }
+    }
+    fe25519_copy(r, &result);
 }
