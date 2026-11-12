@@ -20,10 +20,6 @@
 
 #define MBEDTLS_ALLOW_PRIVATE_ACCESS
 
-#if defined(PICO_RP2040) || defined(PICO_RP2350)
-#define PICO_PLATFORM
-#endif
-
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>

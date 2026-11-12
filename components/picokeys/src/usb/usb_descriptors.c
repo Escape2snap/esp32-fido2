@@ -23,7 +23,19 @@
 #include "picokeys_version.h"
 #include "usb.h"
 #include "serial.h"
+
+/* Optional user config (gitignored — copy from device_config.old.h) */
+#if __has_include("device_config.h")
 #include "device_config.h"
+#endif
+
+/* Fallback defaults if device_config.h is absent or partial */
+#ifndef DEVICE_VID
+#define DEVICE_VID           0x303A
+#endif
+#ifndef DEVICE_PID
+#define DEVICE_PID           0x0002
+#endif
 
 #ifndef USB_VID
 #define USB_VID   DEVICE_VID
@@ -33,16 +45,14 @@
 #endif
 
 #ifndef USB_BCD
-#if defined(ESP_PLATFORM)
 #define USB_BCD   0x0210
-#else
-#define USB_BCD   0x0110
-#endif
 #endif
 
 #define USB_CONFIG_ATT_ONE TU_BIT(7)
 
-#define MAX_USB_POWER       50
+/* bMaxPower is encoded in 2 mA units by TUD_CONFIG_DESCRIPTOR; ESP32-S3
+   plus the status LED draws more than the previous 50 mA budget. */
+#define MAX_USB_POWER       100
 
 //--------------------------------------------------------------------+
 // Device Descriptors
@@ -80,7 +90,7 @@ uint8_t const *tud_descriptor_device_cb(void) {
 #define TUD_INTERFACE_DESC_LEN 9
 #define TUD_ENDPOINT_DESC_LEN 7
 #define TUSB_SMARTCARD_LEN 54
-#define TUSB_WSMARTCARD_LEN 53
+#define TUSB_WSMARTCARD_LEN 54
 
 #define TUSB_SMARTCARD_CCID_DESC_LEN (TUD_INTERFACE_DESC_LEN + TUSB_SMARTCARD_LEN + TUSB_SMARTCARD_CCID_EPS * TUD_ENDPOINT_DESC_LEN)
 #define TUSB_SMARTCARD_WCID_DESC_LEN (TUD_INTERFACE_DESC_LEN + TUSB_WSMARTCARD_LEN + 2 * TUD_ENDPOINT_DESC_LEN)
@@ -131,9 +141,12 @@ enum
 };
 
 #ifdef USB_ITF_CCID
+/* dwFeatures 0x40840 is a compatibility value required by Windows usbccid.
+   Bit 0x40 (automatic parameter negotiation) must stay set; removing it
+   makes PC/SC negotiate parameters and fail with SCARD_E_PROTO_MISMATCH. */
 #define TUD_SMARTCARD_DESCRIPTOR_WEB(_itf, _strix, _epout, _epin, _epsize) \
     9, TUSB_DESC_INTERFACE, _itf, 0, 2, 0xFF, 0, 0, _strix, \
-    TUSB_WSMARTCARD_LEN, 0x21, U16_TO_U8S_LE(0x0110), 0, 0x1, U32_TO_U8S_LE(0x01|0x2), U32_TO_U8S_LE(0xDFC), U32_TO_U8S_LE(0xDFC), 0, U32_TO_U8S_LE(0x2580), U32_TO_U8S_LE(0x2580), 0, U32_TO_U8S_LE(0xFE), U32_TO_U8S_LE(0), U32_TO_U8S_LE(0), U32_TO_U8S_LE(0x40840), U32_TO_U8S_LE(USB_BUFFER_SIZE), 0xFF, 0xFF, U16_TO_U8S_LE(0x0), 0, \
+    TUSB_WSMARTCARD_LEN, 0x21, U16_TO_U8S_LE(0x0110), 0, 0x1, U32_TO_U8S_LE(0x01|0x2), U32_TO_U8S_LE(0xDFC), U32_TO_U8S_LE(0xDFC), 0, U32_TO_U8S_LE(0x2580), U32_TO_U8S_LE(0x2580), 0, U32_TO_U8S_LE(0xFE), U32_TO_U8S_LE(0), U32_TO_U8S_LE(0), U32_TO_U8S_LE(0x40840), U32_TO_U8S_LE(USB_BUFFER_SIZE), 0xFF, 0xFF, U16_TO_U8S_LE(0x0), 0, 0x1, \
     7, TUSB_DESC_ENDPOINT, _epout, TUSB_XFER_BULK, U16_TO_U8S_LE(_epsize), 0, \
     7, TUSB_DESC_ENDPOINT, _epin,  TUSB_XFER_BULK, U16_TO_U8S_LE(_epsize), 0
 #define TUD_SMARTCARD_DESCRIPTOR_2EP(_itf, _strix, _epout, _epin, _epsize) \
@@ -152,7 +165,9 @@ enum
 #endif
 
 uint8_t desc_config[MAX_TUSB_DESC_TOTAL_LEN] = {
-    TUD_CONFIG_DESCRIPTOR(1, 0, 4, 0, USB_CONFIG_ATT_ONE | TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, MAX_USB_POWER)
+    /* Bus-powered and no remote-wakeup implementation: do not advertise
+       TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP. */
+    TUD_CONFIG_DESCRIPTOR(1, 0, 4, 0, USB_CONFIG_ATT_ONE, MAX_USB_POWER)
 };
 
 #ifdef USB_ITF_HID

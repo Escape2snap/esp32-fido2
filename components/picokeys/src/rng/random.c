@@ -20,9 +20,7 @@
 #include "picokeys.h"
 #include "hwrng.h"
 #include "random.h"
-#if defined(PICO_PLATFORM)
-#include "pico/mutex.h"
-#elif defined(ESP_PLATFORM)
+#if defined(ESP_PLATFORM)
 #include "compat/esp_compat.h"
 #else
 #include "compat/queue.h"
@@ -30,6 +28,10 @@
 
 #define RANDOM_BYTES_LENGTH 32
 static uint32_t random_word[RANDOM_BYTES_LENGTH / sizeof(uint32_t)];
+/* Offset of the next unconsumed byte in random_word.  It must survive
+   between calls: a local variable restarted every short request and
+   returned the same bytes to every caller. */
+static uint32_t random_fill_index = 0;
 static mutex_t random_mutex;
 static bool random_mutex_initialized = false;
 
@@ -64,6 +66,12 @@ const uint8_t *random_bytes_get(size_t len) {
     if (random_mutex_initialized) {
         mutex_enter_blocking(&random_mutex);
     }
+    if (random_fill_index != 0) {
+        /* Do not hand out the partially consumed block: the iterator has
+           already returned its prefix to another caller. */
+        hwrng_flush();
+        random_fill_index = 0;
+    }
     for (size_t ix = 0; ix < len; ix += RANDOM_BYTES_LENGTH) {
         hwrng_wait_full();
         memcpy(return_word + ix / sizeof(uint32_t), random_word, RANDOM_BYTES_LENGTH);
@@ -80,7 +88,7 @@ const uint8_t *random_bytes_get(size_t len) {
  */
 int random_fill_iterator(void *arg, unsigned char *out, size_t out_len) {
     random_fill_iterator_ctx_t *ctx = (random_fill_iterator_ctx_t *) arg;
-    uint32_t index = ctx ? ctx->index : 0;
+    uint32_t index = ctx ? ctx->index : random_fill_index;
     uint8_t n;
     int ret = 0;
 
@@ -112,6 +120,9 @@ int random_fill_iterator(void *arg, unsigned char *out, size_t out_len) {
 
     if (ctx) {
         ctx->index = index;
+    }
+    else {
+        random_fill_index = index;
     }
     if (random_mutex_initialized) {
         mutex_exit(&random_mutex);

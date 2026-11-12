@@ -66,7 +66,20 @@ extern struct apdu apdu;
 
 extern uint16_t set_res_sw(uint8_t sw1, uint8_t sw2);
 extern int process_apdu(void);
-extern uint16_t apdu_process(uint8_t, const uint8_t *buffer, uint16_t buffer_size);
+
+/*
+ * Source transport of an incoming APDU.  HID sub-interface numbers and CCID
+ * slot numbers are separate namespaces and both start at zero, so the
+ * completion handler must be chosen from an explicit transport tag instead
+ * of comparing interface indices.
+ */
+typedef enum {
+    APDU_SRC_NONE = 0,
+    APDU_SRC_HID,
+    APDU_SRC_CCID
+} apdu_src_t;
+
+extern uint16_t apdu_process(uint8_t, apdu_src_t, const uint8_t *buffer, uint16_t buffer_size);
 extern void apdu_finish(void);
 extern uint16_t apdu_next(void);
 extern void *apdu_thread(void *);

@@ -17,9 +17,6 @@
 
 #include "picokeys.h"
 #include "led/led.h"
-#ifdef PICO_PLATFORM
-#include "hardware/gpio.h"
-#endif
 
 #ifdef ESP_PLATFORM
 

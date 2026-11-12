@@ -19,10 +19,7 @@
 #include "hwrng.h"
 #include "pico_time.h"
 
-#if defined(PICO_PLATFORM)
-#include "pico/rand.h"
-#include "pico/mutex.h"
-#elif defined(ESP_PLATFORM)
+#if defined(ESP_PLATFORM)
 #include "bootloader_random.h"
 #include "esp_random.h"
 #include "compat/esp_compat.h"

@@ -37,7 +37,7 @@ uint32_t led_get_mode(void) {
 }
 
 void led_blinking_task(void) {
-#if defined(PICO_PLATFORM) || defined(ESP_PLATFORM)
+#if defined(ESP_PLATFORM)
     static uint32_t start_ms = 0;
     static uint32_t stop_ms = 0;
     static uint32_t last_led_update_ms = 0;
@@ -79,7 +79,7 @@ void led_blinking_task(void) {
 }
 
 void led_off_all(void) {
-#if defined(PICO_PLATFORM) || defined(ESP_PLATFORM)
+#if defined(ESP_PLATFORM)
     led_driver->set_color(LED_COLOR_OFF, 0, 0);
 #endif
 }
@@ -108,7 +108,7 @@ led_driver_t led_driver_dummy = {
 
 void led_init(void) {
     led_driver = &led_driver_dummy;
-#if defined(PICO_PLATFORM) || defined(ESP_PLATFORM)
+#if defined(ESP_PLATFORM)
     // Guess default driver
 #if defined(PIMORONI_TINY2040) || defined(PIMORONI_TINY2350)
     led_driver = &led_driver_pimoroni;

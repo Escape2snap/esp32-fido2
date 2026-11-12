@@ -11,6 +11,14 @@ CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# Optimise the crypto/protocol code: -Og made RSA/ECC operations several
+# times slower and contributed to PC/SC timeouts during key generation.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# app_main() scans the flash filesystem and initialises OTP storage; the
+# default 3584-byte stack is tight for that work.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
 CONFIG_WL_SECTOR_SIZE_512=y
 CONFIG_WL_SECTOR_MODE_PERF=y
 CONFIG_ESP_COREDUMP_ENABLE_TO_NONE=y

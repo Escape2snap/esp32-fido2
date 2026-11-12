@@ -199,22 +199,25 @@ static int credential_silent_tag(const uint8_t *cred_id, size_t cred_id_len, con
 }
 
 int credential_verify(uint8_t *cred_id, size_t cred_id_len, const uint8_t *rp_id_hash, bool silent) {
-    if (cred_id_len < 4 + 12 + 16) {
+    bool silent_format = cred_id_len >= CRED_PROTO_LEN &&
+        (memcmp(cred_id, CRED_PROTO_22_S, CRED_PROTO_LEN) == 0 ||
+         memcmp(cred_id, CRED_PROTO_25_S, CRED_PROTO_LEN) == 0);
+    size_t hdr_len = CRED_PROTO_LEN + CRED_IV_LEN + CRED_TAG_LEN +
+                     (silent_format ? CRED_SILENT_TAG_LEN : 0);
+    if (cred_id_len < hdr_len) {
+        /* A short credential ID with a "silent" prefix used to underflow
+           cred_id_len - hdr_len in the ChaCha20-Poly1305 call below. */
         return -1;
     }
     uint8_t key[32] = {0}, *iv = cred_id + CRED_PROTO_LEN, *cipher = cred_id + CRED_PROTO_LEN + CRED_IV_LEN,
             *tag = cred_id + cred_id_len - CRED_TAG_LEN;
     cred_proto_t proto = CRED_PROTO_21;
-    if (memcmp(cred_id, CRED_PROTO_22_S, CRED_PROTO_LEN) == 0 || memcmp(cred_id, CRED_PROTO_25_S, CRED_PROTO_LEN) == 0) { // New format
+    if (silent_format) { // New format
         tag = cred_id + cred_id_len - CRED_SILENT_TAG_LEN - CRED_TAG_LEN;
         proto = CRED_PROTO_25;
     }
     int ret = 0;
     if (!silent) {
-        int hdr_len = CRED_PROTO_LEN + CRED_IV_LEN + CRED_TAG_LEN;
-        if (proto == CRED_PROTO_22 || proto == CRED_PROTO_25) {
-            hdr_len += CRED_SILENT_TAG_LEN;
-        }
         credential_derive_chacha_key(key, cred_id);
         mbedtls_chachapoly_context chatx;
         mbedtls_chachapoly_init(&chatx);

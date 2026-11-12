@@ -43,13 +43,19 @@ static bool hkey_init = false;
 
 static bool persist_pin_retry_counter(file_t *ef, const uint8_t *pin_data, uint16_t pin_data_len) {
     if (file_put_data(ef, pin_data, pin_data_len) != PICOKEYS_OK) {
+        printf("DEBUG: persist_pin_retry_counter: file_put_data failed\n");
         return false;
     }
     // Do not trust the decremented RAM copy until core0 has drained the flash queue.
-    if (!flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS) || file_get_size(ef) != pin_data_len || !file_get_data(ef)) {
+    bool sync_ok = flash_commit_sync(PIN_RETRY_COMMIT_TIMEOUT_MS);
+    if (!sync_ok || file_get_size(ef) != pin_data_len || !file_get_data(ef)) {
+        printf("DEBUG: persist_pin_retry_counter fail: sync=%d sz_match=%d data=%p\n",
+               sync_ok, file_get_size(ef) == pin_data_len, file_get_data(ef));
         return false;
     }
-    return file_get_data(ef)[0] == pin_data[0];
+    bool ret = file_get_data(ef)[0] == pin_data[0];
+    if (!ret) printf("DEBUG: persist_pin_retry_counter: data mismatch\n");
+    return ret;
 }
 
 static int beginUsingPinUvAuthToken(bool userIsPresent) {
@@ -194,11 +200,20 @@ int encrypt(uint8_t protocol, const uint8_t *key, const uint8_t *in, uint16_t in
 }
 
 int decrypt(uint8_t protocol, const uint8_t *key, const uint8_t *in, uint16_t in_len, uint8_t *out) {
+    /* The largest caller-provided plaintext buffer is 256 bytes.  Keep the
+       helpers self-defensive: an unvalidated length used to underflow
+       in_len - IV_SIZE and overflow the destination. */
     if (protocol == 1) {
+        if (in_len > 256) {
+            return -1;
+        }
         memcpy(out, in, in_len);
         return aes_decrypt(key, NULL, 32 * 8, PICOKEYS_AES_MODE_CBC, out, in_len);
     }
     else if (protocol == 2) {
+        if (in_len < IV_SIZE || in_len - IV_SIZE > 256) {
+            return -1;
+        }
         memcpy(out, in + IV_SIZE, in_len - IV_SIZE);
         return aes_decrypt(key + 32, in, 32 * 8, PICOKEYS_AES_MODE_CBC, out, in_len - IV_SIZE);
     }
@@ -670,6 +685,12 @@ int cbor_client_pin(const uint8_t *data, size_t len) {
             CBOR_ERROR(CTAP2_ERR_MISSING_PARAMETER);
         }
         if (pinUvAuthProtocol != 1 && pinUvAuthProtocol != 2) {
+            CBOR_ERROR(CTAP1_ERR_INVALID_PARAMETER);
+        }
+        if ((pinUvAuthProtocol == 1 && pinHashEnc.len != 16) ||
+            (pinUvAuthProtocol == 2 && pinHashEnc.len != 16 + IV_SIZE)) {
+            /* Same constraint as changePIN: the encrypted PIN hash is one
+               AES block, optionally prefixed by the 16-byte IV in v2. */
             CBOR_ERROR(CTAP1_ERR_INVALID_PARAMETER);
         }
         if (subcommand == 0x5 && (permissions != 0 || rpId.present == true)) {

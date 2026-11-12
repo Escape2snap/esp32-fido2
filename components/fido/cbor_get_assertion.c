@@ -98,7 +98,7 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
     Credential creds[MAX_CREDENTIAL_COUNT_IN_LIST] = { 0 };
     size_t allowList_len = 0, creds_len = 0;
     uint8_t *aut_data = NULL;
-    bool asserted = false, up = false, uv = false;
+    bool asserted = false, up = false, uv = false, did_up = false;
     int64_t kty = 2, alg = 0, crv = 0;
     CborByteString kax = { 0 }, kay = { 0 }, salt_enc = { 0 }, salt_auth = { 0 };
     const bool *credBlob = NULL;
@@ -122,6 +122,9 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
         else if (val_u == 0x03) { // excludeList
             CBOR_PARSE_ARRAY_START(_f1, 2)
             {
+                if (allowList_len >= MAX_CREDENTIAL_COUNT_IN_LIST) {
+                    CBOR_ERROR(CTAP2_ERR_LIMIT_EXCEEDED);
+                }
                 PublicKeyCredentialDescriptor *pc = &allowList[allowList_len];
                 CBOR_PARSE_MAP_START(_f2, 3)
                 {
@@ -131,6 +134,9 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
                     if (strcmp(_fd3, "transports") == 0) {
                         CBOR_PARSE_ARRAY_START(_f3, 4)
                         {
+                            if (pc->transports_len >= 8) {
+                                CBOR_ERROR(CTAP2_ERR_LIMIT_EXCEEDED);
+                            }
                             CBOR_FIELD_GET_TEXT(pc->transports[pc->transports_len], 4);
                             pc->transports_len++;
                             if (pc->transports_len >= 8) {
@@ -458,6 +464,7 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
                 }
             }
             flags |= FIDO2_AUT_FLAG_UP;
+            did_up = true;
             clearUserPresentFlag();
             clearUserVerifiedFlag();
             clearPinUvAuthTokenPermissionsExceptLbw();
@@ -750,7 +757,7 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
     mbedtls_platform_zeroize(largeBlobKey, sizeof(largeBlobKey));
     CBOR_CHECK(cbor_encoder_close_container(&encoder, &mapEncoder));
     resp_size = cbor_encoder_get_buffer_size(&encoder, ctap_resp->init.data + 1);
-    if (up) {
+    if (did_up) {
         ctr++;
         file_put_data(ef_counter, (uint8_t *) &ctr, sizeof(ctr));
         flash_commit_sync(5000);

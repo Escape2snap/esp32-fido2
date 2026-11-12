@@ -18,9 +18,6 @@
 #include "picokeys.h"
 #include "led/led.h"
 #include "random.h"
-#ifdef PICO_PLATFORM
-#include "bsp/board.h"
-#endif
 #ifndef ENABLE_EMULATION
 #include "tusb.h"
 #include "device/usbd_pvt.h"
@@ -66,6 +63,7 @@
 #define CCID_CMD_STATUS_TIMEEXT 0x80
 
 #define CCID_ERROR_XFR_OVERRUN  0xFC
+#define CCID_ERROR_PROTOCOL_NOT_SUPPORTED 0x07
 
 /*
  * Since command-byte is at offset 0,
@@ -267,9 +265,12 @@ int driver_process_usb_packet_ccid(uint8_t itf, uint16_t rx_read) {
                 ccid_resp_fast[itf]->bSlot = 0;
                 ccid_resp_fast[itf]->bSeq = ccid_header[itf]->bSeq;
                 ccid_resp_fast[itf]->abRFU0 = 0;
-                ccid_resp_fast[itf]->abRFU1 = 0;
-                //printf("1 %x %x %x || %x %x %x\n",ccid_resp_fast->apdu,apdu.rdata,ccid_resp_fast,ccid_header,ccid_header->apdu,apdu.data);
-                memcpy(&ccid_resp_fast[itf]->apdu, ccid_atr + 1, size_atr);
+                /* RDR_to_PC_DataBlock: byte 8 is bError, byte 9 is
+                   bProtocolNum.  The OpenPGP ATR is T=1, so report T=1. */
+                ccid_resp_fast[itf]->abRFU1 = 0x0100;
+                if (ccid_atr) {
+                    memcpy(&ccid_resp_fast[itf]->apdu, ccid_atr + 1, size_atr);
+                }
                 if (ccid_status == 1) {
                     //card_start(apdu_thread);
                 }
@@ -306,14 +307,29 @@ int driver_process_usb_packet_ccid(uint8_t itf, uint16_t rx_read) {
                     0xFE, /* bIFSC */
                     0    /* bNadValue */
                 };
+                bool proto_ok = true;
+                if (ccid_header[itf]->bMessageType == CCID_SET_PARAMS) {
+                    /* PC_to_RDR_SetParameters puts the requested protocol
+                       at offset 7 (abRFU0 in this packed header). */
+                    if (ccid_header[itf]->abRFU0 != 1 ||
+                        ccid_header[itf]->dwLength != sizeof(params)) {
+                        proto_ok = false;
+                    }
+                }
                 ccid_resp_fast[itf]->bMessageType = CCID_PARAMS_RET;
-                ccid_resp_fast[itf]->dwLength = sizeof(params);
+                ccid_resp_fast[itf]->dwLength = proto_ok ? sizeof(params) : 0;
                 ccid_resp_fast[itf]->bSlot = 0;
                 ccid_resp_fast[itf]->bSeq = ccid_header[itf]->bSeq;
                 ccid_resp_fast[itf]->abRFU0 = ccid_status;
-                ccid_resp_fast[itf]->abRFU1 = 0x0100;
-                memcpy(&ccid_resp_fast[itf]->apdu, params, sizeof(params));
-                ccid_write_fast(itf, (const uint8_t *)ccid_resp_fast[itf], sizeof(params) + 10);
+                /* bError in the low byte, bProtocolNum (T=1) in the high byte. */
+                ccid_resp_fast[itf]->abRFU1 = proto_ok
+                    ? 0x0100
+                    : (uint16_t)((1u << 8) | CCID_ERROR_PROTOCOL_NOT_SUPPORTED);
+                if (proto_ok) {
+                    memcpy(&ccid_resp_fast[itf]->apdu, params, sizeof(params));
+                }
+                ccid_write_fast(itf, (const uint8_t *)ccid_resp_fast[itf],
+                                (uint16_t)((proto_ok ? sizeof(params) : 0) + 10));
             }
             else if (ccid_header[itf]->bMessageType == CCID_SETDATARATEANDCLOCKFREQUENCY) {
                 ccid_resp_fast[itf]->bMessageType = CCID_SETDATARATEANDCLOCKFREQUENCY_RET;
@@ -327,7 +343,7 @@ int driver_process_usb_packet_ccid(uint8_t itf, uint16_t rx_read) {
             }
             else if (ccid_header[itf]->bMessageType == CCID_XFR_BLOCK) {
                 apdu.rdata = &ccid_response[itf]->apdu;
-                apdu_sent = apdu_process(itf, &ccid_header[itf]->apdu, (uint16_t)ccid_header[itf]->dwLength);
+                apdu_sent = apdu_process(itf, APDU_SRC_CCID, &ccid_header[itf]->apdu, (uint16_t)ccid_header[itf]->dwLength);
 #ifndef ENABLE_EMULATION
                 if (apdu_sent > 0) {
                     card_start(sc_itf_to_usb_itf(itf), apdu_thread);
@@ -400,6 +416,10 @@ static void ccid_init_cb(void) {
 
 static void ccid_reset_cb(uint8_t rhport) {
     itf_num = 0;
+    /* A USB reset powers the card off; do not keep a stale "active"
+       status or mounted LED from the previous enumeration. */
+    ccid_status = 1;
+    led_set_mode(MODE_NOT_MOUNTED);
     vendord_reset(rhport);
 }
 
@@ -417,7 +437,7 @@ static uint16_t ccid_open(uint8_t rhport, tusb_desc_interface_t const *itf_desc,
     tusb_desc_endpoint_t const *desc_ep = (tusb_desc_endpoint_t const *)((uint8_t *)itf_desc + drv_len - sizeof(tusb_desc_endpoint_t));
     TU_ASSERT(usbd_edpt_open(rhport, desc_ep), 0);
     uint8_t msg[] = { 0x50, 0x03 };
-#if defined(PICO_PLATFORM) || defined(ESP_PLATFORM)
+#if defined(ESP_PLATFORM)
     usbd_edpt_xfer(rhport, desc_ep->bEndpointAddress, msg, sizeof(msg));
 #else
     usbd_edpt_xfer(rhport, desc_ep->bEndpointAddress, msg, sizeof(msg), sizeof(msg));

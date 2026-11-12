@@ -45,7 +45,11 @@ int process_apdu(void) {
         }
         chain_used = (size_t)(chain_ptr - chain_buf);
         if (chain_used + apdu.nc >= sizeof(chain_buf)) {
-            return SW_CLA_NOT_SUPPORTED();
+            /* ISO 7816-4: wrong length, not wrong CLA.  Also drop the
+               partial chain so it cannot leak into the next command. */
+            is_chaining = false;
+            chain_ptr = chain_buf;
+            return SW_WRONG_LENGTH();
         }
         memcpy(chain_ptr, apdu.data, apdu.nc);
         chain_ptr += apdu.nc;
@@ -72,7 +76,34 @@ int process_apdu(void) {
     return SW_FILE_NOT_FOUND();
 }
 
-uint16_t apdu_process(uint8_t itf, const uint8_t *buffer, uint16_t buffer_size) {
+/*
+ * Send a short status-only response through the transport that owns the
+ * request.  Used for requests rejected before an applet gets to run.
+ */
+static uint16_t apdu_send_error(uint8_t itf, apdu_src_t src, uint16_t sw) {
+    if (apdu.rdata == NULL) {
+        return 0;
+    }
+    apdu.rdata[0] = (uint8_t)(sw >> 8);
+    apdu.rdata[1] = (uint8_t)(sw & 0xff);
+    apdu.sw = 0;
+    apdu.rlen = 0;
+#ifndef ENABLE_EMULATION
+#ifdef USB_ITF_HID
+    if (src == APDU_SRC_HID) {
+        driver_exec_finished_cont_hid(itf, 2, 7);
+    }
+#endif
+#ifdef USB_ITF_CCID
+    if (src == APDU_SRC_CCID) {
+        driver_exec_finished_ccid(itf, 2);
+    }
+#endif
+#endif
+    return 0;
+}
+
+uint16_t apdu_process(uint8_t itf, apdu_src_t src, const uint8_t *buffer, uint16_t buffer_size) {
     apdu.header = (uint8_t *) buffer;
     apdu.nc = apdu.ne = 0;
     if (buffer_size == 4) {
@@ -119,20 +150,31 @@ uint16_t apdu_process(uint8_t itf, const uint8_t *buffer, uint16_t buffer_size) 
         }
     }
     //printf("apdu.nc %u, apdu.ne %u\n",apdu.nc,apdu.ne);
+    if (apdu.nc > 0 &&
+        (apdu.data == NULL || buffer_size < 5 ||
+         (uint32_t)(apdu.data - buffer) + apdu.nc > (uint32_t)buffer_size)) {
+        /* Lc claims more bytes than the transport delivered. */
+        return apdu_send_error(itf, src, 0x6700);
+    }
     if (apdu.header[1] == 0xc0) {
         //printf("apdu.ne %u, apdu.rlen %d, bk %x\n",apdu.ne,apdu.rlen,rdata_bk);
+        if (rdata_gr == NULL || apdu.rdata == NULL || apdu.rlen == 0) {
+            /* No response is pending: reject instead of dereferencing the
+               uninitialised response pointer. */
+            return apdu_send_error(itf, src, 0x6985);
+        }
         timeout_stop();
         rdata_gr[0] = rdata_bk >> 8;
         rdata_gr[1] = rdata_bk & 0xff;
         if (apdu.rlen <= apdu.ne) {
 #ifndef ENABLE_EMULATION
-#ifdef USB_ITF_HID_CTAP
-            if (ITF_HID_TOTAL > 0 && itf == ITF_HID_CTAP && itf != ITF_SC_CCID && itf != ITF_SC_WCID) {
+#ifdef USB_ITF_HID
+            if (src == APDU_SRC_HID) {
                 driver_exec_finished_cont_hid(itf, apdu.rlen + 2, (uint16_t)(rdata_gr - apdu.rdata));
             }
 #endif
 #ifdef USB_ITF_CCID
-            if (itf == ITF_SC_CCID || itf == ITF_SC_WCID) {
+            if (src == APDU_SRC_CCID) {
                 driver_exec_finished_cont_ccid(itf, apdu.rlen + 2, (uint16_t)(rdata_gr - apdu.rdata));
             }
 #endif
@@ -155,13 +197,13 @@ uint16_t apdu_process(uint8_t itf, const uint8_t *buffer, uint16_t buffer_size) 
                 rdata_gr[1] = (uint8_t)(apdu.rlen - apdu.ne);
             }
 #ifndef ENABLE_EMULATION
-#ifdef USB_ITF_HID_CTAP
-            if (ITF_HID_TOTAL > 0 && itf == ITF_HID_CTAP && itf != ITF_SC_CCID && itf != ITF_SC_WCID) {
+#ifdef USB_ITF_HID
+            if (src == APDU_SRC_HID) {
                 driver_exec_finished_cont_hid(itf, (uint16_t)(apdu.ne + 2), (uint16_t)(rdata_gr - apdu.ne - apdu.rdata));
             }
 #endif
 #ifdef USB_ITF_CCID
-            if (itf == ITF_SC_CCID || itf == ITF_SC_WCID) {
+            if (src == APDU_SRC_CCID) {
                 driver_exec_finished_cont_ccid(itf, (uint16_t)(apdu.ne + 2), (uint16_t)(rdata_gr - apdu.ne - apdu.rdata));
             }
 #endif

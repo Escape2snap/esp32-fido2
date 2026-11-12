@@ -113,6 +113,13 @@ void *cbor_thread(void *arg) {
         uint8_t cmd = cbor_cmd;
         apdu.sw = (uint16_t)cbor_parse(cmd, data, len);
         if (apdu.sw == 0) {
+            /* Every successful CTAP2 response is a CBOR map.  Handlers such
+               as reset/config/largeBlobs-set encode no payload, which used
+               to leave a zero-byte response that strict hosts reject. */
+            if (res_APDU_size == 0 && res_APDU != NULL && res_APDU[-1] == 0) {
+                res_APDU[0] = 0xa0;
+                res_APDU_size = 1;
+            }
             DEBUG_DATA(res_APDU, res_APDU_size);
         }
         else {

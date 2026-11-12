@@ -33,15 +33,11 @@
   #include "esp_partition.h"
   #include "esp_log.h"
   const esp_partition_t *part0;
-  /* ESP-IDF's esp_partition_erase_range / esp_partition_write manage
-     cache and interrupts internally via the flash guard; no manual
-     interrupt masking needed.  (Dual-core systems must let core 1
-     run to feed its watchdog.) */
   #define save_and_disable_interrupts() 0
-  #define restore_interrupts(a) ((void)(a))
   #define flash_range_erase(a,b) esp_partition_erase_range(part0, a, b)
   #define flash_range_program(a,b,c) esp_partition_write(part0, a, b, c);
-  #else
+  #define restore_interrupts(a) ((void)(a))
+ #else
   #ifdef _MSC_VER
    #include <windows.h>
    #include <io.h>
@@ -108,11 +104,13 @@ void low_flash_commit(void);
 
 void low_flash_task(void){
     if (mutex_try_enter(&mtx_flash, NULL) == true) {
+        bool wrote_any = false;
         if (locked_out == true && flash_available == true && ready_pages > 0) {
             //printf(" DO_FLASH AVAILABLE\n");
+            int __before = ready_pages;
             for (int r = 0; r < TOTAL_FLASH_PAGES; r++) {
                 if (flash_pages[r].ready == true) {
-#if defined(PICO_PLATFORM) || defined(ESP_PLATFORM)
+#if defined(PICO_PLATFORM)
                     mutex_exit(&mtx_flash);
                     //printf("WRITTING %X\n",flash_pages[r].address-XIP_BASE);
                     if (multicore_lockout_start_timeout_us(1000) == false) {
@@ -132,21 +130,54 @@ void low_flash_task(void){
                     }
                     mutex_enter_blocking(&mtx_flash);
                     //printf("WRITEN %X !\n",flash_pages[r].address);
+#elif defined(ESP_PLATFORM)
+                    //printf("WRITTING %X\n",flash_pages[r].address-XIP_BASE);
+                    /* Suspend core 1 first, then the FreeRTOS scheduler,
+                       so neither another core nor another task can modify
+                       the flash page cache while the mutex is released
+                       for the erase+write.  ISRs still fire during the
+                       flash ops (USB stays alive). */
+                    if (multicore_lockout_start_timeout_us(1000) == false) {
+                        printf("WARN: FLASH LOCKOUT START TIMEOUT\n");
+                        continue;
+                    }
+                    mutex_exit(&mtx_flash);
+                    //printf("WRITTING %X\n",flash_pages[r].address-XIP_BASE);
+                    flash_range_erase(flash_pages[r].address - XIP_BASE, FLASH_SECTOR_SIZE);
+                    flash_range_program(flash_pages[r].address - XIP_BASE, flash_pages[r].page, FLASH_SECTOR_SIZE);
+                    mutex_enter_blocking(&mtx_flash);
+                    if (multicore_lockout_end_timeout_us(1000) == false) {
+                        printf("WARN: FLASH LOCKOUT END TIMEOUT\n");
+                        continue;
+                    }
+                    //printf("WRITEN %X !\n",flash_pages[r].address);
 #else
                     memcpy(map + flash_pages[r].address, flash_pages[r].page, FLASH_SECTOR_SIZE);
 #endif
                     flash_pages[r].ready = false;
-                    ready_pages--;
+                    flash_pages[r].erase = false;  /* also consumed if set by flash_erase_page */
+                    wrote_any = true;
+                    if (ready_pages > 0) {
+                        ready_pages--;
+                    } else {
+                        printf("ERROR: ready_pages underflow at page %d (addr=0x%x)", r, flash_pages[r].address);
+                        for (int __di = 0; __di < TOTAL_FLASH_PAGES; __di++)
+                            printf(" [%d]%s%s@0x%x", __di,
+                                   flash_pages[__di].ready ? "R" : "-",
+                                   flash_pages[__di].erase ? "E" : "-",
+                                   flash_pages[__di].address);
+                        printf("\n");
+                    }
                 }
                 else if (flash_pages[r].erase == true) {
-#if defined(PICO_PLATFORM) || defined(ESP_PLATFORM)
+#if defined(PICO_PLATFORM)
                     mutex_exit(&mtx_flash);
+                    //printf("WRITTING\n");
                     if (multicore_lockout_start_timeout_us(1000) == false) {
                         printf("WARN: FLASH LOCKOUT START TIMEOUT\n");
                         mutex_enter_blocking(&mtx_flash);
                         continue;
                     }
-                    //printf("WRITTING\n");
                     uint32_t ints = save_and_disable_interrupts();
                     flash_range_erase(flash_pages[r].address - XIP_BASE, flash_pages[r].page_size ? ((int) (flash_pages[r].page_size / FLASH_SECTOR_SIZE)) * FLASH_SECTOR_SIZE : FLASH_SECTOR_SIZE);
                     restore_interrupts(ints);
@@ -156,26 +187,63 @@ void low_flash_task(void){
                         continue;
                     }
                     mutex_enter_blocking(&mtx_flash);
+#elif defined(ESP_PLATFORM)
+                    //printf("WRITTING\n");
+                    if (multicore_lockout_start_timeout_us(1000) == false) {
+                        printf("WARN: FLASH LOCKOUT START TIMEOUT\n");
+                        continue;
+                    }
+                    mutex_exit(&mtx_flash);
+                    flash_range_erase(flash_pages[r].address - XIP_BASE, flash_pages[r].page_size ? ((int) (flash_pages[r].page_size / FLASH_SECTOR_SIZE)) * FLASH_SECTOR_SIZE : FLASH_SECTOR_SIZE);
+                    mutex_enter_blocking(&mtx_flash);
+                    if (multicore_lockout_end_timeout_us(1000) == false) {
+                        printf("WARN: FLASH LOCKOUT END TIMEOUT\n");
+                        continue;
+                    }
 #else
                     memset(map + flash_pages[r].address, 0, FLASH_SECTOR_SIZE);
 #endif
                     flash_pages[r].erase = false;
-                    ready_pages--;
+                    wrote_any = true;
+                    if (ready_pages > 0) ready_pages--; else printf("ERROR: ready_pages underflow at erase page %d\n", r);
                 }
             }
 #if !defined(PICO_PLATFORM) && !defined(ESP_PLATFORM)
             msync(map, FLASH_SIZE_BYTES, MS_SYNC);
 #endif
             if (ready_pages != 0) {
-                printf("ERROR: DO FLASH DOES NOT HAVE ZERO PAGES\n");
+                printf("ERROR: DO FLASH DOES NOT HAVE ZERO PAGES (had %d before, %d remain)\n", __before, ready_pages);
+                if (ready_pages > TOTAL_FLASH_PAGES) {
+                    printf("  → recovering from underflow, resetting to 0\n");
+                    ready_pages = 0;
+                }
             }
         }
         if (ready_pages == 0) {
             flash_available = false;
         }
 #ifdef ESP_PLATFORM
-        esp_partition_munmap(fd_map);
-        esp_partition_mmap(part0, 0, part0->size, ESP_PARTITION_MMAP_DATA, (const void **)&map, (esp_partition_mmap_handle_t *)&fd_map);
+        if (wrote_any) {
+            /* Refreshing the mapping invalidates every pointer returned by
+               file_get_data()/flash_read(); doing it on every 10 ms tick,
+               even when nothing was written, made those pointers unstable.
+               core 1 must not read through the mapping while it is being
+               replaced, so hold the lockout across the remap. */
+            if (multicore_lockout_start_timeout_us(1000) == false) {
+                printf("WARN: FLASH LOCKOUT START TIMEOUT (remap skipped)\n");
+            }
+            else {
+                esp_partition_munmap(fd_map);
+                esp_err_t map_err = esp_partition_mmap(part0, 0, part0->size, ESP_PARTITION_MMAP_DATA, (const void **)&map, (esp_partition_mmap_handle_t *)&fd_map);
+                if (map_err != ESP_OK) {
+                    ESP_LOGE("low_flash", "remap failed: %d", map_err);
+                    map = NULL;
+                }
+                if (multicore_lockout_end_timeout_us(1000) == false) {
+                    printf("WARN: FLASH LOCKOUT END TIMEOUT\n");
+                }
+            }
+        }
 #endif
         mutex_exit(&mtx_flash);
     }
@@ -249,6 +317,13 @@ void low_flash_init(void) {
     data_end_addr = FLASH_SIZE_BYTES;
 #endif
     flash_set_bounds(data_start_addr, data_end_addr);
+#ifdef ESP_PLATFORM
+    /* On ESP32 the flash write gate starts open — FIDO2 runs on core 0 and
+       never calls card_start() → low_flash_init_core1(), so locked_out
+       would remain false and low_flash_task() would skip all writes. */
+    locked_out = true;
+    flash_available = true;
+#endif
 }
 
 void low_flash_init_core1(void) {
@@ -292,6 +367,10 @@ int flash_program_block(uintptr_t addr, const uint8_t *data, size_t len) {
 
     if (!data || len == 0) {
         return PICOKEYS_ERR_NULL_PARAM;
+    }
+    if ((addr & (FLASH_SECTOR_SIZE - 1)) + len > FLASH_SECTOR_SIZE) {
+        printf("ERROR: FLASH WRITE CROSSES SECTOR BOUNDARY\n");
+        return PICOKEYS_ERR_NO_MEMORY;
     }
 
     mutex_enter_blocking(&mtx_flash);

@@ -26,27 +26,6 @@
 #include "button.h"
 
 #include "apdu.h"
-#include "debug_mode.h"
-
-#if CONFIG_DEBUG_STACK
-#include "freertos/task.h"
-static void log_stack_high_water(void) {
-    static uint32_t _ticks = 0;
-    if (++_ticks % (1000 / 10) != 0)  /* ~every 10 s at 10 ms/tick */
-        return;
-    TaskHandle_t tasks[] = { xTaskGetIdleTaskHandleForCPU(0), xTaskGetIdleTaskHandleForCPU(1) };
-    for (int i = 0; i < 2; i++) {
-        if (tasks[i]) {
-            ESP_LOGI("stack", "core%d: %u bytes free",
-                     i, (unsigned)uxTaskGetStackHighWaterMark(tasks[i]));
-        }
-    }
-    ESP_LOGI("stack", "core0_loop: %u bytes free",
-             (unsigned)uxTaskGetStackHighWaterMark(hcore0));
-}
-#else
-#define log_stack_high_water()
-#endif
 
 app_t apps[16];
 uint8_t num_apps = 0;
@@ -130,21 +109,17 @@ void execute_tasks(void) {
 static void core0_loop(void *arg) {
     (void)arg;
 #ifdef ESP_PLATFORM
-    /* Subscribe to the Task WDT so the periodic esp_task_wdt_reset()
-       calls below are effective.  Without this the task is not in the
-       WDT list and every call prints:
-         task_wdt: esp_task_wdt_reset(...): task not found */
-    esp_task_wdt_add(NULL);
+    esp_task_wdt_add(NULL);  /* subscribe to Task WDT before feeding loop */
 #endif
     while (1) {
         execute_tasks();
         hwrng_task();
         flash_task();
         button_task();
-        log_stack_high_water();
 #ifdef ESP_PLATFORM
-        /* Feed WDT — flash commits and long-running Ed25519 operations
-           on core 1 must not starve core 0's watchdog. */
+        /* Feed Task WDT — flash commits and long operations must not
+           starve the watchdog.  Without this, keygen and other ops
+           that batch flash writes can exceed CONFIG_ESP_TASK_WDT_TIMEOUT_S. */
         esp_task_wdt_reset();
 #endif
         vTaskDelay(pdMS_TO_TICKS(10));
