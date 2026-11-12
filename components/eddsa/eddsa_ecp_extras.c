@@ -32,10 +32,10 @@ static const unsigned char BE_By[32] = {
     0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x58
 };
 static const unsigned char BE_2d[32] = {
-    0xA3, 0x78, 0x59, 0x13, 0xCA, 0x4D, 0xEB, 0x75,
-    0xAB, 0xD8, 0x41, 0x41, 0x4D, 0x0A, 0x70, 0x00,
-    0x98, 0xE8, 0x79, 0x77, 0x79, 0x40, 0xC7, 0x8C,
-    0x73, 0xFE, 0x6F, 0x2B, 0xEE, 0x6C, 0x03, 0x52
+    0x24, 0x06, 0xD9, 0xDC, 0x56, 0xDF, 0xFC, 0xE7,
+    0x19, 0x8E, 0x80, 0xF2, 0xEE, 0xF3, 0xD1, 0x30,
+    0x00, 0xE0, 0x14, 0x9A, 0x82, 0x83, 0xB1, 0x56,
+    0xEB, 0xD6, 0x9B, 0x94, 0x26, 0xB2, 0xF1, 0x59
 };
 static const unsigned char BE_l[32] = {
     0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -70,16 +70,23 @@ static void fe_init(void) {
 /*  Edwards curve operations (a = -1, extended coordinates)            */
 /* ------------------------------------------------------------------ */
 
-/* Double: (X,Y,Z,T) = 2*(X,Y,Z,T) */
+/* Double: (X,Y,Z,T) = 2*(X,Y,Z,T) for the a=-1 twisted Edwards
+   curve (Ed25519).  The previous version used the a=+1 formula, which
+   silently produced a different curve point. */
 static void pt_double(fe25519 *X, fe25519 *Y, fe25519 *Z, fe25519 *T) {
-    fe25519 A, B, C, D, E, F, G, H;
-    fe25519_sq(&A, X); fe25519_sq(&B, Y); fe25519_sq(&C, Z);
-    fe25519_add(&C, &C, &C);
-    fe25519_add(&D, &A, &B); fe25519_sub(&E, &A, &B);
-    fe25519_add(&F, &D, &C); fe25519_sub(&G, &D, &C);
-    fe25519_mul(&H, Y, Z); fe25519_add(&H, &H, &H);
-    fe25519_mul(X, &E, &F); fe25519_mul(Y, &G, &H);
-    fe25519_mul(T, &E, &H); fe25519_mul(Z, &F, &G);
+    fe25519 A, B, C, D, E, F, H;
+    fe25519_sq(&A, X);
+    fe25519_sq(&B, Y);
+    fe25519_sq(&C, Z); fe25519_add(&C, &C, &C);       /* C = 2*Z^2 */
+    fe25519_sub(&D, &B, &A);                          /* D = B - A */
+    fe25519_add(&E, X, Y); fe25519_sq(&E, &E);
+    fe25519_sub(&E, &E, &A); fe25519_sub(&E, &E, &B); /* E = 2*X*Y */
+    fe25519_sub(&F, &D, &C);                          /* F = D - C */
+    fe25519_add(&H, &A, &B); fe25519_neg(&H, &H);     /* H = -(A + B) */
+    fe25519_mul(X, &E, &F);
+    fe25519_mul(Y, &D, &H);
+    fe25519_mul(T, &E, &H);
+    fe25519_mul(Z, &F, &D);
 }
 
 /* Add: R += B where B has Z=1 (base point) */
