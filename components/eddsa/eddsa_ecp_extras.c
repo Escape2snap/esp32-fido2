@@ -165,7 +165,10 @@ int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
     fe_init();
 
     /* 1. Generate random seed */
-    f_rng(p_rng, seed, 32);
+    if (!f_rng || f_rng(p_rng, seed, 32) != 0) {
+        mbedtls_platform_zeroize(seed, sizeof(seed));
+        return MBEDTLS_ERR_ECP_RANDOM_FAILED;
+    }
 
 #if defined(CONFIG_DEBUG_ENABLE) && defined(CONFIG_DEBUG_APDU_HEX)
     printf("[dbg] Ed25519 seed: ");
@@ -387,7 +390,7 @@ int ed25519_setup_group(mbedtls_ecp_group *grp) {
         "\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x7f", 32));
     MBEDTLS_MPI_CHK(mbedtls_mpi_sub_int(&grp->A, &grp->P, 1));  /* A = -1 */
     MBEDTLS_MPI_CHK(mbedtls_mpi_read_string(&grp->B, 10,
-        "37095705934669439368261579733463697440081861771719747696363762035337300239372"));
+        "37095705934669439343138083508754565189542113879843219016388785533085940283555"));
     MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(&grp->G.X, BE_Bx, 32));
     MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(&grp->G.Y, BE_By, 32));
     MBEDTLS_MPI_CHK(mbedtls_mpi_lset(&grp->G.Z, 1));
