@@ -1,371 +1,376 @@
 # ESP32-FIDO2
 
-ESP32-FIDO2 transforms an **ESP32-S3** microcontroller into a combined **FIDO2 security key** and **OpenPGP smartcard** — a fully open-source YubiKey alternative.
+ESP32-FIDO2 turns an **ESP32-S3** into a USB security key that combines:
 
-Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
+- **FIDO2 / CTAP 2.1 / U2F** — WebAuthn, resident credentials, PIN/UV
+- **OpenPGP card v3.4** — GnuPG, SSH, S/MIME, PSO:CDS and PSO:DEC
+- **OATH TOTP/HOTP** — OATH applet (Yubico OTP is not implemented)
 
-- **FIDO2 / CTAP 2.1** — WebAuthn, U2F, passwordless authentication ✅
-- **OpenPGP card v3.4** — GnuPG, SSH, S/MIME, smartcard operations ✅
-- **OATH TOTP/HOTP** ✅ — Yubico OTP 🚧
+The firmware is a standalone ESP-IDF project built on
+[pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk). It does
+not target the Raspberry Pi Pico.
 
-> Standalone ESP-IDF project optimized for **ESP32-S3**.
-> No Raspberry Pi Pico or cross-platform logic.
->
-> **Hardware acceleration:** ESP32-S3 uses an **RSA Accelerator** (multi-precision integer engine, up to 4096-bit) repurposed for ECC point multiplication. ESP-IDF's mbedTLS port uses it for **P-256 (secp256r1) and P-192 (secp192r1)** point multiplication; P-384 and P-521 fall back to software. RSA itself gets significant speedup (~323×). All configurable via `sdkconfig.defaults`.
+## Status
 
----
+| Area | Status |
+|------|--------|
+| FIDO2 / WebAuthn / U2F | Working |
+| OpenPGP RSA / NIST ECC | Working |
+| OpenPGP Ed25519 / X25519 | Working (hardware-tested) |
+| OATH TOTP/HOTP | Working |
+| Yubico OTP | Not implemented |
+| Windows CCID + HID | Working; one reconnect may be needed after first enumeration |
 
-## Features
+Hardware-verified on an ESP32-S3 + Windows host:
+
+- FIDO2 WebAuthn registration and login
+- OpenPGP Ed25519 key generation and signing
+- cv25519/X25519 PSO:DEC decryption, including the OpenPGP `0x40` Montgomery prefix
+- GnuPG `--card-status`, PIN verification and key generation
+
+## Feature Matrix
 
 ### FIDO2 / WebAuthn / U2F
 
 | Feature | Status |
 |---------|--------|
-| CTAP 2.1 / CTAP 1 / U2F | ✅ |
-| WebAuthn (discoverable credentials, resident keys) | ✅ |
-| HMAC-Secret, CredProtect, minPinLength | ✅ |
-| credBlobs, largeBlobKey | ✅ |
-| PIN & UV authentication protocol | ✅ |
-| Credential management | ✅ |
-| Enterprise attestation | ✅ |
-| ECDSA (P-256, P-384, P-521, secp256k1) | ✅ |
-| OATH TOTP/HOTP | ✅ |
-| Yubico OTP | 🚧 |
+| CTAP 2.1 / CTAP 1 / U2F | Yes |
+| Discoverable credentials / resident keys | Yes |
+| HMAC-Secret, CredProtect, minPinLength | Yes |
+| credBlob, largeBlobKey | Yes |
+| PIN and user-verification protocol | Yes |
+| Credential management | Yes |
+| Enterprise attestation | Yes |
+| ECDSA P-256 / P-384 / P-521 / secp256k1 | Yes |
+| OATH TOTP/HOTP | Yes |
+| Yubico OTP | No |
 
 ### OpenPGP Smartcard
 
 | Feature | Status |
 |---------|--------|
-| OpenPGP card v3.4 (ISO 7816-4) | ✅ |
-| 3 key slots (SIG, DEC, AUT) | ✅ |
-| RSA 2048/3072/4096 | ✅ |
-| ECDSA (P-256, P-384, P-521, secp256k1) | ✅ |
-| Brainpool (256r1, 384r1, 512r1) | ⚠️ software fallback |
-| Curve25519 (X25519 ECDH, feat/ed25519) | ✅ |
-| Ed25519 (EdDSA, feat/ed25519) | ✅ |
-| On-device key generation | ✅ |
-| Key import/export (PUT DATA, IMPORT DATA) | ✅ |
-| PIN & Admin PIN (PW1/PW3) verification | ✅ |
-| Reset Code (RC) & RESET RETRY | ✅ |
-| Change PIN | ✅ |
-| PW Status Byte (DO C4) | ✅ |
-| KDF (Key Derivation Function) | ✅ |
-| Signature counter | ✅ |
-| Challenge-response (GET CHALLENGE) | ✅ |
-| Internal authentication | ✅ |
-| PSO (Compute Digital Signature, Decipher) | ✅ |
-| GnuPG / SSH / S/MIME compatible | ✅ |
+| OpenPGP card v3.4 (ISO 7816-4) | Yes |
+| Three key slots (SIG, DEC, AUT) | Yes |
+| RSA 2048 / 3072 / 4096 | Yes |
+| ECDSA P-256 / P-384 / P-521 / secp256k1 | Yes |
+| Brainpool 256r1 / 384r1 / 512r1 | Software fallback |
+| Ed25519 / EdDSA | Yes |
+| X25519 / cv25519 ECDH | Yes |
+| On-device key generation | Yes |
+| Key import/export (PUT DATA, IMPORT DATA) | Yes |
+| PW1 / PW3 PIN verification | Yes |
+| Reset Code and RESET RETRY | Yes |
+| PW status byte (DO C4) | Yes |
+| KDF (PIN, DEK) | Yes |
+| Signature counter | Yes |
+| GET CHALLENGE / INTERNAL AUTHENTICATE | Yes |
+| PSO:CDS and PSO:DEC | Yes |
+| GnuPG / SSH / S/MIME compatible | Yes |
 
-### Default Algorithm
+### Default Key Algorithms
 
-| Slot | Algorithm |
-|------|----------|
-| Signature (SIG) | NIST P-384 (ECDSA) |
-| Decryption (DEC) | NIST P-384 (ECDH) |
-| Authentication (AUT) | NIST P-384 (ECDSA) |
-
-### Experimental: Ed25519 / X25519 Support (feat/ed25519 Branch)
-
-The `feat/ed25519` branch adds Ed25519 (EdDSA) and X25519 (Curve25519 ECDH) support:
-
-| Feature | Status | Note |
-|---------|--------|------|
-| Ed25519 key generation | ✅ | Self-contained fe25519 field arithmetic |
-| Ed25519 signing | ✅ | Both OpenPGP and FIDO2 paths |
-| X25519 ECDH | ✅ | Key generation and PSO:DEC working (0x40 Montgomery prefix fix) |
-| Key import/export | ✅ | Ed25519 import path added |
-| WDT handling | ✅ | Task + IDLE watchdog fed during long operations |
-| Performance | ⚠️ | Fixed fe25519/sc25519 path; on-target timing still needs measurement |
-| Constant-time signing | ✅ | Branchless field ops, add-always scalar mult, ref10 sc25519 mod-l |
-
-**Status:** Supported on this branch. Hardware-tested on ESP32-S3 + Windows:
-FIDO2 WebAuthn, OpenPGP Ed25519 signing and cv25519 PSO:DEC decryption all work.
-The CCID path keeps the `dwFeatures = 0x40840` compatibility value.
-
-**Extra dependency:** This branch needs `polhenarejos/mbedtls` (`mbedtls-3.6-eddsa` branch)
-for EdDSA support. `third-party/` is gitignored, so clone manually:
-
-```bash
-git checkout feat/ed25519
-git clone --branch mbedtls-3.6-eddsa \
-    https://github.com/polhenarejos/mbedtls.git \
-    third-party/mbedtls-fork
-cd third-party/mbedtls-fork
-git submodule update --init --depth 1
-cd ..
-idf.py set-target esp32s3
-idf.py build
-```
-
-### Hardware
-
-| Spec | Details |
+| Slot | Default |
 |------|---------|
-| Chip | ESP32-S3 (Xtensa dual-core 240MHz) |
-| Flash | 16MB (Quad SPI QIO) |
-| PSRAM | 8MB+ Octal (unused) |
-| LED | NeoPixel WS2812 (GPIO48, dimmed ~20%) |
-| USB | CCID (smartcard) + HID (FIDO2 CTAP) |
-| HW Accelerators | AES, SHA, RSA/ECC (RSA Accelerator, up to 4096-bit) |
+| Signature (SIG) | NIST P-384 ECDSA |
+| Decryption (DEC) | NIST P-384 ECDH |
+| Authentication (AUT) | NIST P-384 ECDSA |
 
----
+Ed25519 (SIG/AUT) and X25519 (DEC) can be selected with
+`gpg --edit-card` → `key-attr`.
+
+## Hardware
+
+| Item | Detail |
+|------|--------|
+| MCU | ESP32-S3, dual-core Xtensa LX7, 240 MHz |
+| Flash | 16 MB QIO |
+| PSRAM | 8 MB+ Octal (currently unused) |
+| LED | NeoPixel WS2812 on GPIO48 |
+| User-presence button | BOOT button, GPIO0 |
+| USB | CCID smartcard + HID FIDO2 composite device |
+| Accelerators | AES, SHA, RSA/MPI accelerator; NIST P-256/P-192 ECC via the RSA/MPI engine |
 
 ## Quick Start
 
+### Prerequisites
+
+- ESP-IDF **v5.4.x** (tested with v5.4.4) and the ESP32-S3 toolchain
+- Python 3 and `git`
+- A board with 16 MB flash and a NeoPixel on GPIO48
+
+### Clone and dependencies
+
+`third-party/` is gitignored, so the two external dependencies must be
+cloned manually.
+
 ```bash
-# Clone
 git clone https://github.com/Escape2snap/esp32-fido2.git
 cd esp32-fido2
 
-# Set up ESP-IDF
+# tinycbor
+git clone https://github.com/intel/tinycbor.git third-party/tinycbor
+cp third-party/tinycbor/src/tinycbor-export.h.in third-party/tinycbor/src/tinycbor-export.h
+# create third-party/tinycbor/src/tinycbor-version.h with
+# TINYCBOR_VERSION_MAJOR 7, MINOR 0, PATCH 0
+
+# mbedTLS fork with EdDSA/X25519 support
+git clone --branch mbedtls-3.6-eddsa \
+  https://github.com/polhenarejos/mbedtls.git third-party/mbedtls-fork
+cd third-party/mbedtls-fork
+git submodule update --init --depth 1
+cd ../..
+```
+
+The tinycbor version header is required:
+
+```c
+#define TINYCBOR_VERSION_MAJOR 7
+#define TINYCBOR_VERSION_MINOR 0
+#define TINYCBOR_VERSION_PATCH 0
+```
+
+### Build and flash
+
+```bash
 cd ~/esp-idf-v5.4.4
 ./install.sh esp32s3
 . ./export.sh
 cd ~/esp32-fido2
 
-# Clone third-party dependencies
-git clone https://github.com/intel/tinycbor.git third-party/tinycbor
-cp third-party/tinycbor/src/tinycbor-export.h.in third-party/tinycbor/src/tinycbor-export.h
-
-# Create tinycbor version header (required by the library)
-printf '#define TINYCBOR_VERSION_MAJOR 7\n#define TINYCBOR_VERSION_MINOR 0\n#define TINYCBOR_VERSION_PATCH 0\n' \
-  > third-party/tinycbor/src/tinycbor-version.h
-
-# First time: clean flash
-idf.py set-target esp32s3    # ⚠️ required (tinyusb doesn't support default esp32)
+idf.py set-target esp32s3     # required; TinyUSB does not support the default esp32 target
 idf.py build
+
+# First flash
 idf.py -p /dev/ttyACM0 erase-flash
 idf.py -p /dev/ttyACM0 flash
 
 # Subsequent builds
 idf.py build
 idf.py -p /dev/ttyACM0 flash
-
-# Monitor
-idf.py -p /dev/ttyACM0 monitor
 ```
 
-### Permission Issues (Linux)
+On Windows use the appropriate COM port, for example
+`idf.py -p COM5 flash`.
+
+### Linux permissions
 
 ```bash
-# Temporary
 sudo chmod 666 /dev/ttyACM0
-# Permanent
-sudo usermod -a -G dialout $USER
+# or permanently:
+sudo usermod -a -G dialout "$USER"
 ```
 
----
+## Device Identity
 
-## Testing
-
-### OpenPGP (GnuPG)
-
-Default PINs (set in `components/openpgp/openpgp.c`):
-
-| Password | Default | Used for |
-|----------|---------|---------|
-| PW1 (user PIN) | `123456` | Signing, decryption, authentication |
-| RC (Reset Code) | `12345678` | Unblock PW1 when forgotten |
-| PW3 (admin PIN) | `12345678` | Admin operations, key management, PW1/PW3 change |
-
-Change all three during first-time setup with `gpg --edit-card` → `passwd`.
+`main/device_config.h` is gitignored. The build auto-copies
+`main/device_config.old.h` on the first build if the file is missing.
+Edit it to change USB strings, VID/PID or interface names.
 
 ```bash
-# Check card
-gpg --card-status
+cp main/device_config.old.h main/device_config.h
+# edit USB identity
+idf.py build
+```
 
-# Initialize (set PINs, generate keys)
+## Usage
+
+### OpenPGP with GnuPG
+
+Default PINs are defined in `components/openpgp/openpgp.c`:
+
+| Secret | Default | Purpose |
+|--------|---------|---------|
+| PW1 (user PIN) | `123456` | Signing, decryption, authentication |
+| RC (reset code) | `12345678` | Unblock PW1 |
+| PW3 (admin PIN) | `12345678` | Admin operations and key management |
+
+Change all three after first setup:
+
+```bash
+gpg --card-status
 gpg --edit-card
 gpg/card> admin
 gpg/card> passwd
 gpg/card> generate
 ```
 
-> **First key generation:** The default algorithm is NIST P-384.
-> On Windows, GPG may report `Zero prefix in S-expression` on the first
-> `generate`. Run `key-attr` once to initialize, then generate normally:
-> ```
-> gpg/card> key-attr
->   select ECC → NIST P-384 for all three slots
-> gpg/card> generate
-> ```
-> This only needs to be done once per fresh card.
->
-> **PIN retry counter:** After flashing new firmware, existing devices may
-> have stale `EF_PW_PRIV` data. The firmware auto-detects and corrects this
-> on boot (reports `PW status empty/wrong size`). A single correct PIN entry
-> after boot will initialize the correct retry counters.
+Notes:
 
-### FIDO2 / WebAuthn
+- The default algorithm is NIST P-384.
+- On Windows, GPG may report `Zero prefix in S-expression` on the first
+  generation. Run `key-attr` once, then `generate`.
+- For Ed25519/X25519, use `key-attr` and select EdDSA/Ed25519 for SIG and
+  AUT and cv25519 for DEC before generating.
+- The CCID path keeps the Windows-compatible `dwFeatures = 0x40840` value.
+
+### FIDO2
 
 ```bash
-# Check device info (make sure FIDO2 is alive)
-python3 -c "from fido2.hid import CtapHidDevice; \
-  d = next(CtapHidDevice.list_devices()); \
-  print(d.get_info())"
-
-# Browser test: https://webauthn.io
-
+python3 -c "from fido2.hid import CtapHidDevice; d = next(CtapHidDevice.list_devices()); print(d.get_info())"
 ```
 
-**User Presence:** Press the **BOOT button** (GPIO0) on the board when
-prompted. This physical button press is required by FIDO2 for registration
-and authentication.
+Browser test: <https://webauthn.io>
 
-### Device Configuration
+Press the **BOOT button** when the browser asks for user presence.
 
-```bash
-# Optional: CMake auto-copies the template on first build if device_config.h is missing
-cp main/device_config.old.h main/device_config.h
-# edit USB names, VID, PID, interface strings
-```
+### OATH
 
-`main/device_config.h` is gitignored — your custom identity stays local.
-The template at `main/device_config.old.h` has the default values.
-
-To use your custom identity, `#include "device_config.h"` is picked up
-by `usb_descriptors.c` automatically via `__has_include`.
-
-### Python
-
-```bash
-pip install fido2
-python -c "
-from fido2.hid import CtapHidDevice
-for dev in CtapHidDevice.list_devices():
-    print(f'FIDO2 device: {dev}')
-"
-```
-
----
+The OATH applet supports TOTP/HOTP and can be used with
+`ykman oath` (subject to the YubiKey OATH command subset implemented by
+pico-keys). Yubico OTP is not implemented.
 
 ## Platform Notes
 
-| Feature | Linux | Windows |
-|---------|-------|---------|
-| FIDO2 | ✅ | ✅ |
-| OpenPGP (CCID) | ✅ | ✅ |
+### Windows
 
-On **Windows**, the composite CCID+HID device may require a reconnect after
-the first enumeration while `usbccgp.sys` binds both interfaces. A 100ms
-startup delay is built into the firmware. The CCID descriptor keeps the
-compatibility `dwFeatures` value `0x40840`; bit `0x40` must remain set
-(see PR #51). Removing it makes Windows PC/SC report
-`SCARD_E_PROTO_MISMATCH`.
+- The device is a composite CCID + HID device. Windows may require a
+  reconnect after the first enumeration while `usbccgp.sys` binds both
+  interfaces.
+- Firmware includes a 100 ms USB settle delay.
+- Do not remove the CCID feature bit `0x40` from `dwFeatures = 0x40840`;
+  doing so makes PC/SC negotiate parameters and fail with
+  `SCARD_E_PROTO_MISMATCH`.
+- GnuPG and the Windows Smart Card service may need a restart after a
+  driver update.
 
-### Known Limitations
+### WSL
 
-- **Brainpool curves:** ESP32-S3 HW ECC acceleration is limited to NIST
-  curves. Brainpool uses the mbedTLS software fallback (enabled in
-  `sdkconfig`), so key generation/signing work but are slower and may hit
-  PC/SC timeouts. Prefer NIST P-256/P-384.
-- **GPG key-attr:** On first key generation with default P-384, GPG on Windows
-  may report `Zero prefix in S-expression`. Run `key-attr` once before
-  `generate` to initialize the algorithm attributes.
-- **CCID+HID coexistence:** Windows may require a reconnect after the first
-  enumeration. The `SCARD_E_PROTO_MISMATCH` regression from PR #47 was fixed
-  in PR #51 by restoring `dwFeatures = 0x40840`; do not remove bit `0x40`.
-- **P-384 key generation is slow:** On ESP32-S3, P-384 ECDSA/ECDH key
-  generation using software mbedtls_mpi can take 10+ seconds. The Task
-  WDT will trigger but the operation completes. Stick to P-256 or Ed25519
-  (feat/ed25519) for faster key generation.
-- **Ed25519/Curve25519 (feat/ed25519):** Ed25519 key generation/signing and
-  X25519 PSO:DEC are implemented and hardware-tested. Ed25519 signing uses
-  constant-time scalar/field code compiled with the pinned `-O3` flags; do
-  not remove the `components/eddsa` optimization override. Target timing and
-  WDT margin still need measurement.
+The device must be passed through to WSL with `usbipd` before Linux
+GnuPG/PCSC can see it. Windows and WSL cannot own the USB device at the
+same time.
 
----
+## Architecture
 
-## Fix History
+### USB Interfaces
 
-A complete changelog with root-cause analyses can be found in
-[`HISTORY.md`](HISTORY.md). It covers PRs #24 through #45. Recent fixes:
-- #47: USB transport/APDU routing; its CCID `dwFeatures` change was reverted in #51.
-- #48: FIDO2/OATH bounds checks and PIN handling.
-- #49: OpenPGP v3.4 lifecycle, DEK, PIN retry, ECDH and key handling.
-- #50: RNG, flash mapping, OTP user presence and build hardening.
-- #51: restore CCID `dwFeatures = 0x40840` for Windows PC/SC.
-- #57: make Ed25519 signing constant-time (field/scalar hardening, ref10 sc25519).
-- #58: fix cv25519/X25519 PSO:DEC Montgomery `0x40` prefix handling.
+| Interface | Function | Endpoints | Host driver |
+|-----------|----------|-----------|-------------|
+| 0 | CCID smartcard | Bulk OUT/IN + interrupt IN | usbccid / PCSC |
+| 1 | HID FIDO2/CTAP | Interrupt OUT/IN | hidusb |
 
-PR #47 introduced a CCID `dwFeatures` regression that was fixed in PR #51;
-do not remove the `0x40` compatibility bit again.
+CCID is interface 0 for Windows compatibility.
 
----
+### Tasks
+
+- TinyUSB task on CPU1
+- `core0_loop` on CPU0: USB housekeeping, flash task, button task, LED task
+- Applet APDU/CBOR workers on CPU1
+
+### Components
+
+| Path | Purpose |
+|------|---------|
+| `components/picokeys` | USB CCID/HID, flash filesystem, LED, RNG, APDU routing |
+| `components/openpgp` | OpenPGP card v3.4, PSO, PIN/DEK, key management |
+| `components/fido` | CTAP2.1, WebAuthn, PIN/UV, OATH |
+| `components/eddsa` | Ed25519/X25519 field and scalar code |
+| `components/tinycbor` | tinycbor build wrapper |
+| `third-party/mbedtls-fork` | EdDSA-capable mbedTLS fork |
+| `main` | ESP-IDF application, USB identity and task setup |
 
 ## Build Configuration
 
 ### Hardware Acceleration
 
-| Accelerator | Config |
-|-------------|--------|
+Configured in `sdkconfig.defaults`:
+
+| Accelerator | Setting |
+|-------------|---------|
 | AES | `CONFIG_MBEDTLS_HARDWARE_AES=y` |
 | SHA | `CONFIG_MBEDTLS_HARDWARE_SHA=y` |
 | ECC | `CONFIG_MBEDTLS_HARDWARE_ECC=y` |
 | GCM | `CONFIG_MBEDTLS_HARDWARE_GCM=y` |
-| MPI (big-number) | `CONFIG_MBEDTLS_HARDWARE_MPI=y` |
+| MPI | `CONFIG_MBEDTLS_HARDWARE_MPI=y` |
 
-### Interface Mode
+NIST P-256/P-192 point multiplication uses the ESP32-S3 RSA/MPI
+accelerator. P-384, P-521 and Brainpool use software fallbacks.
 
-Edit `main/main.c` to switch USB interfaces:
+### USB Interface Mode
+
+Edit `main/main.c`:
 
 ```c
-// Both CCID + HID (default — FIDO2 + OpenPGP)
+/* Both CCID and HID: FIDO2 + OpenPGP (default) */
 phy_data.enabled_usb_itf = PHY_USB_ITF_CCID | PHY_USB_ITF_HID;
 
-// CCID + WCID only (more stable GPG on Windows, no FIDO2)
+/* CCID + WCID only: OpenPGP, no FIDO2 */
 phy_data.enabled_usb_itf = PHY_USB_ITF_CCID | PHY_USB_ITF_WCID;
 ```
 
-### Security & Debug
+### Security / Debug Defaults
 
-Configured in `sdkconfig.defaults`:
-
-| Setting | Default | Note |
-|---------|---------|------|
-| Core dump | **disabled** | Crash info suppressed, no serial dump |
-| USB-Serial-JTAG | **disabled** | Prevents runtime JTAG debug access via USB |
-| JTAG eFuse | not burned | Can re-enable by rebuilding; for permanent disable see `espefuse.py burn_efuse JTAG_DISABLE` |
-
-JTAG is disabled at the Kconfig level only — recompile with `=y` to restore.
-For hardware-level permanent disable, burn the `JTAG_DISABLE` eFuse (irreversible).
-
----
-
-## Project Structure
-
-```
-esp32-fido2/
-├── CMakeLists.txt
-├── sdkconfig.defaults
-├── partitions.csv
-├── main/
-│   ├── CMakeLists.txt
-│   ├── idf_component.yml
-│   ├── main.c
-│   ├── device_config.h        ← gitignored, your custom identity
-│   └── device_config.old.h    ← template, tracked in git
-├── components/
-│   ├── picokeys/        # Core SDK: USB (CCID/HID), flash FS, LED, RNG, crypto
-│   ├── openpgp/         # OpenPGP card v3.4: APDU commands, key management, PSO
-│   ├── fido/            # FIDO2 / CTAP 2.1: makeCredential, getAssertion, PIN/UV
-│   └── tinycbor/        # CBOR encode/decode (third-party)
-└── managed_components/  # TinyUSB, NeoPixel
-```
-
----
+- Core dump disabled
+- USB-Serial-JTAG disabled
+- JTAG eFuse not burned
+- `CONFIG_DEBUG_ENABLE` and `CONFIG_DEBUG_APDU_HEX` must stay disabled for
+  production: debug builds can print key material.
 
 ## Partition Layout
 
 | Partition | Offset | Size |
 |-----------|--------|------|
-| nvs | 0x11000 | 24KB |
-| phy_init | 0x17000 | 4KB |
-| factory | 0x20000 | 2MB |
-| part0 | 0x220000 | 4MB |
+| nvs | 0x11000 | 24 KB |
+| phy_init | 0x17000 | 4 KB |
+| factory | 0x20000 | 2 MB |
+| part0 | 0x220000 | 4 MB |
 
----
+The factory app partition is 2 MB; release builds fit comfortably below
+the limit.
+
+## Security Model
+
+### Key Hierarchy
+
+```
+random 32-byte device salt (first boot)
+  + chip serial or optional OTP key
+    -> HKDF-SHA256("DEVICE/ROOT")
+      -> device master key (keydev), encrypted in flash
+        -> AES-GCM/ChaCha20-Poly1305
+          -> encrypted private keys and credentials in flash
+```
+
+Private key material is encrypted at rest. The optional OTP key adds
+entropy; without it, physical flash readout plus the chip serial number
+is sufficient to attempt an offline brute-force of the device root.
+
+### PIN / DEK Flow
+
+```
+user PIN -> KDF -> DEK -> decrypt private key
+```
+
+The DEK is derived in RAM and is never exported.
+
+### Secure Boot (Optional, Irreversible)
+
+ESP32-S3 uses **Secure Boot v2**. Do not use generic
+`espefuse.py burn_key secure_boot` instructions from ESP32 Secure Boot v1.
+
+High-level flow:
+
+1. Generate and back up an offline signing key.
+2. Enable Secure Boot v2 in `sdkconfig`.
+3. Sign bootloader and application.
+4. Burn the public key digest.
+5. Enable Secure Boot and verify with `espefuse.py summary`.
+
+See the [ESP-IDF Secure Boot
+documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/security/secure-boot.html).
+This is irreversible; a lost signing key makes firmware updates
+impossible. ESP32 silicon has had published Secure Boot bypasses; check
+Espressif security advisories for your revision.
+
+## Known Limitations
+
+- **Windows CCID + HID**: may require one reconnect after first enumeration.
+- **Brainpool**: software fallback; slower and may hit PC/SC timeouts.
+- **P-384 key generation**: software MPI path can take 10+ seconds.
+- **Ed25519/X25519**: Ed25519 signing is constant-time under the pinned
+  `-O3` flags in `components/eddsa/CMakeLists.txt`; do not remove that
+  override. Target timing and WDT margin still need measurement.
+- **Yubico OTP**: not implemented; OATH TOTP/HOTP is supported.
+- **Debug builds**: may print secrets if debug options are enabled.
 
 ## Development
 
@@ -375,91 +380,47 @@ esp32-fido2/
 feat:     new feature
 fix:      bug fix
 docs:     documentation
-chore:    maintenance, tooling
-refactor: code restructuring
-perf:     performance optimization
-test:     testing
+chore:    maintenance/tooling
+refactor: restructuring
+perf:     performance
+test:     tests
 ```
 
-Scope goes **after the colon with a space**, not in parentheses:
-- ✅ `fix: openpgp correct PW_STATUS byte layout`
-- ❌ `fix(openpgp): correct PW_STATUS byte layout`
+Scope goes after the colon and a space:
 
----
+- `fix: openpgp correct PW_STATUS layout`
+- not `fix(openpgp): ...`
 
-## Security Model
+Commits should be signed (`git commit -S -s`) and use English messages.
 
-### Key Hierarchy
+## Fix History
 
-```
-[Random 32-byte device salt] — generated at first boot, per-device unique
-  └── Replaces compile-time constant "NO-OTP" for kbase derivation
-        └── HKDF-SHA256(device_salt, chip_serial or OTP, "DEVICE/ROOT")
-              └── Device Master Key (keydev) — encrypted in Flash
-                    └── AES-GCM/ChaCha20-Poly1305
-                          └── Encrypted private keys → Flash storage
-```
+[`HISTORY.md`](HISTORY.md) contains detailed root-cause analyses for PRs
+#24–#45. Recent work:
 
-All private key material is **encrypted at rest** using a key hierarchy rooted
-in a per-device random salt (generated at first boot) and the chip's serial
-number. The optional OTP key adds additional entropy when provisioned.
+- #47: USB transport and APDU routing
+- #48: FIDO2/OATH bounds and PIN handling
+- #49: OpenPGP v3.4 lifecycle, DEK, PIN retry and key handling
+- #50: RNG, flash mapping, OTP presence and build hardening
+- #51: restore CCID `dwFeatures = 0x40840` for Windows PC/SC
+- #52: README sync for current support
+- #53: CCID status reset on USB reset
+- #54: WCID busy-slots descriptor byte
+- #55: CCID T=1 protocol reporting
+- #56: Ed25519 field arithmetic and curve constants
+- #57: constant-time Ed25519 signing
+- #58: X25519 PSO:DEC `0x40` prefix
+- #59: merge Ed25519/X25519 into main
 
-> **⚠️ Without an OTP key**, the root derivation depends solely on the chip
-> serial number (obtainable via USB). Physical flash readout + serial number
-> is sufficient to offline-brute-force all keys. See
-> [`esp32-fido2-problem`](https://github.com/Escape2snap/esp32-fido2-problem)
-> for the full security analysis.
-
-### Key Derivation
-
-PIN-protected access uses a KEK (Key Encryption Key) flow:
-
-```
-User PIN ──→ KDF ──→ DEK (Data Encryption Key) ──→ Decrypt private key
-```
-
-Each decryption operation requires the correct PIN. The DEK is derived using
-the card's KDF algorithm and never exposed externally.
-
-### Secure Boot (Optional, One-Time)
-
-> **⚠️ Not enabled by default. Irreversible once activated.**
-
-ESP32-S3 supports Secure Boot via eFuse. When enabled, the chip verifies the
-firmware signature against a whitelisted public key before every boot.
-If the firmware is tampered with, the chip refuses to boot.
-
-**Before enabling** — understand the consequences:
-
-- **Irreversible**: eFuse is a physical one-time programmable fuse. Once blown,
-  Secure Boot cannot be disabled.
-- **Key management**: The signing private key must be kept safe. If lost,
-  firmware updates become impossible and the device is **permanently bricked**.
-- **Recovery impossible**: There is no backdoor, no recovery mode, and no
-  debug override.
-
-**ESP32-S3 uses Secure Boot v2.** Do not use generic
-`espefuse.py burn_key secure_boot` instructions (those apply to older
-ESP32 Secure Boot v1 flows). Use the ESP-IDF Secure Boot v2 workflow:
-generate and back up a signing key offline, enable `CONFIG_SECURE_BOOT`,
-sign the bootloader and application, burn only the public key digest,
-then enable Secure Boot and verify with `espefuse.py summary`.
-
-See the [ESP-IDF Secure Boot
-documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/security/secure-boot.html)
-for the exact commands. This is irreversible; a lost signing key makes
-firmware updates impossible.
-
-### Secure Boot limitations
-
-ESP32 silicon has had published Secure Boot bypasses. Check the current
-Espressif security advisories for your chip revision. For high-assurance
-deployments, evaluate newer MCUs with a more robust secure boot design.
-
----
+Do not remove the CCID `0x40` compatibility bit.
 
 ## License
 
-AGPL v3. Based on [pico-openpgp](https://github.com/polhenarejos/pico-openpgp) (GPL v3),
-[pico-fido](https://github.com/polhenarejos/pico-fido) (GPL v3), and
-[pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk) (AGPL v3).
+AGPL v3. Based on:
+
+- [pico-openpgp](https://github.com/polhenarejos/pico-openpgp) (GPL v3)
+- [pico-fido](https://github.com/polhenarejos/pico-fido) (GPL v3)
+- [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk) (AGPL v3)
+
+The Ed25519 scalar arithmetic in `components/eddsa/sc25519.c` is derived
+from the public-domain SUPERCOP ed25519 ref10 implementation.
