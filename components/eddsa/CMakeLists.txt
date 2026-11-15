@@ -6,6 +6,7 @@ set(EDDSA_SOURCES
     ${FORK_DIR}/library/eddsa.c
     ${EDDSA_SRC_DIR}/eddsa_ecp_extras.c
     ${EDDSA_SRC_DIR}/fe25519.c
+    ${EDDSA_SRC_DIR}/sc25519.c
 )
 
 set(EDDSA_INCLUDE_DIRS
@@ -40,4 +41,8 @@ set_source_files_properties(
 set_source_files_properties(
     ${EDDSA_SRC_DIR}/fe25519.c
     PROPERTIES COMPILE_FLAGS "-O3 -UMBEDTLS_ECP_DP_ED448_ENABLED"
+)
+set_source_files_properties(
+    ${EDDSA_SRC_DIR}/sc25519.c
+    PROPERTIES COMPILE_FLAGS "-O3"
 )

@@ -15,6 +15,7 @@
 #include "mbedtls/sha512.h"
 #include "eddsa_compat.h"
 #include "fe25519.h"
+#include "sc25519.h"
 
 /* ------------------------------------------------------------------ */
 /*  Ed25519 constants  (big-endian bytes)                              */
@@ -37,17 +38,10 @@ static const unsigned char BE_2d[32] = {
     0x00, 0xE0, 0x14, 0x9A, 0x82, 0x83, 0xB1, 0x56,
     0xEB, 0xD6, 0x9B, 0x94, 0x26, 0xB2, 0xF1, 0x59
 };
-static const unsigned char BE_l[32] = {
-    0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x14, 0xDE, 0xF9, 0xDE, 0xA2, 0xF7, 0x9C, 0xD6,
-    0x58, 0x12, 0x63, 0x1A, 0x5C, 0xF5, 0xD3, 0xED
-};
-
 /* ------------------------------------------------------------------ */
 /*  Cached field-element constants                                     */
 /* ------------------------------------------------------------------ */
-static fe25519 bX, bY, bT, d2, grp_l;
+static fe25519 bX, bY, bT, d2;
 static int fe_ok = 0;
 
 static void fe_init(void) {
@@ -59,7 +53,6 @@ static void fe_init(void) {
         mbedtls_mpi_read_binary(&_t, BE_Bx, 32); fe25519_from_mpi(&bX, &_t);
         mbedtls_mpi_read_binary(&_t, BE_By, 32); fe25519_from_mpi(&bY, &_t);
         mbedtls_mpi_read_binary(&_t, BE_2d, 32); fe25519_from_mpi(&d2, &_t);
-        mbedtls_mpi_read_binary(&_t, BE_l,  32); fe25519_from_mpi(&grp_l, &_t);
         mbedtls_mpi_free(&_t);
     }
     fe25519_mul(&bT, &bX, &bY);
@@ -269,14 +262,11 @@ int ed25519_sign(const mbedtls_ecp_keypair *key,
     int ret = MBEDTLS_ERR_ECP_BAD_INPUT_DATA;
     unsigned char seed[32], prefix[32], r_buf[64], h_buf[64];
     unsigned char r_enc[32], q_enc[32];
+    unsigned char r_scalar[32], k_scalar[32], s_scalar[32], s64[64];
     fe25519 s, Xq, Yq, Zq, Tq, Xr, Yr, Zr, Tr, x, y;
-    mbedtls_mpi order_l, mr, mk, ms;
     mbedtls_sha512_context sha;
 
     fe_init();
-    mbedtls_mpi_init(&order_l); mbedtls_mpi_init(&mr);
-    mbedtls_mpi_init(&mk); mbedtls_mpi_init(&ms);
-    mbedtls_mpi_read_binary(&order_l, BE_l, 32);
 
     /* Read seed */
     MBEDTLS_MPI_CHK(mbedtls_mpi_write_binary(&key->d, seed, 32));
@@ -298,11 +288,11 @@ int ed25519_sign(const mbedtls_ecp_keypair *key,
     mbedtls_sha512_update(&sha, msg, msg_len);
     mbedtls_sha512_finish(&sha, r_buf);
     mbedtls_sha512_free(&sha);
-    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary_le(&mr, r_buf, 64));
-    MBEDTLS_MPI_CHK(mbedtls_mpi_mod_mpi(&mr, &mr, &order_l));
+    ed25519_sc_reduce(r_buf);
+    memcpy(r_scalar, r_buf, 32);
 
     /* R = r * B */
-    fe25519_from_mpi(&s, &mr);  /* reuse s as r (s not needed past here) */
+    fe25519_from_bytes(&s, r_scalar);
     ED25519_WDT_RESET();
     scalarmult_base(&Xr, &Yr, &Zr, &Tr, &s);
     ED25519_WDT_DEL();
@@ -317,37 +307,31 @@ int ed25519_sign(const mbedtls_ecp_keypair *key,
     mbedtls_sha512_update(&sha, msg, msg_len);
     mbedtls_sha512_finish(&sha, h_buf);
     mbedtls_sha512_free(&sha);
-    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary_le(&mk, h_buf, 64));
-    MBEDTLS_MPI_CHK(mbedtls_mpi_mod_mpi(&mk, &mk, &order_l));
+    ed25519_sc_reduce(h_buf);
+    memcpy(k_scalar, h_buf, 32);
 
-    /* Restore s from seed (was overwritten above as r) */
+    /* Restore s from seed and reduce it mod l. */
     expand_seed(seed, &s, NULL);
-    fe25519_to_mpi(&ms, &s);
+    fe25519_to_bytes(s_scalar, &s);
+    memset(s64, 0, sizeof(s64));
+    memcpy(s64, s_scalar, 32);
+    ed25519_sc_reduce(s64);
+    memcpy(s_scalar, s64, 32);
 
     /* S = (r + k * s) mod l */
-    MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&mk, &mk, &ms));
-    MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&mr, &mr, &mk));
-    MBEDTLS_MPI_CHK(mbedtls_mpi_mod_mpi(&mr, &mr, &order_l));
-    MBEDTLS_MPI_CHK(mbedtls_mpi_write_binary_le(&mr, sig + 32, 32));
+    ed25519_sc_muladd(sig + 32, k_scalar, s_scalar, r_scalar);
     memcpy(sig, r_enc, 32);
-
-#if defined(CONFIG_DEBUG_ENABLE) && defined(CONFIG_DEBUG_APDU_HEX)
-    printf("[dbg] Ed25519 sig R: ");
-    for (int _i = 0; _i < 64; _i++) printf("%02X", sig[_i]);
-    printf("\r\n");
-    printf("[dbg] Ed25519 msg_len=%zu msg=", msg_len);
-    for (size_t _i = 0; _i < msg_len && _i < 64; _i++) printf("%02X", msg[_i]);
-    printf("\r\n");
-#endif
 
     ret = 0;
 cleanup:
-    mbedtls_mpi_free(&order_l); mbedtls_mpi_free(&mr);
-    mbedtls_mpi_free(&mk); mbedtls_mpi_free(&ms);
     mbedtls_platform_zeroize(seed, sizeof(seed));
     mbedtls_platform_zeroize(prefix, sizeof(prefix));
     mbedtls_platform_zeroize(r_buf, sizeof(r_buf));
     mbedtls_platform_zeroize(h_buf, sizeof(h_buf));
+    mbedtls_platform_zeroize(r_scalar, sizeof(r_scalar));
+    mbedtls_platform_zeroize(k_scalar, sizeof(k_scalar));
+    mbedtls_platform_zeroize(s_scalar, sizeof(s_scalar));
+    mbedtls_platform_zeroize(s64, sizeof(s64));
     return ret;
 }
 
