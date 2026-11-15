@@ -6,6 +6,7 @@ set(EDDSA_SOURCES
     ${FORK_DIR}/library/eddsa.c
     ${EDDSA_SRC_DIR}/eddsa_ecp_extras.c
     ${EDDSA_SRC_DIR}/fe25519.c
+    ${EDDSA_SRC_DIR}/sc25519.c
 )
 
 set(EDDSA_INCLUDE_DIRS
@@ -29,11 +30,29 @@ set_source_files_properties(
     PROPERTIES COMPILE_FLAGS
         "-Wno-error=switch -Wno-switch -Wno-error=unused-function -Wno-error=unused-parameter -UMBEDTLS_ECP_DP_ED448_ENABLED"
 )
+# The field/scalar code is security-sensitive: -Og re-introduces
+# secret-dependent carry/borrow branches, while -O3 lowers it to
+# branchless carry logic on Xtensa.  Pin the optimization level here
+# instead of inheriting the project-wide debug setting.
 set_source_files_properties(
     ${EDDSA_SRC_DIR}/eddsa_ecp_extras.c
-    PROPERTIES COMPILE_FLAGS "-Wno-error=switch -Wno-switch -UMBEDTLS_ECP_DP_ED448_ENABLED"
+    PROPERTIES COMPILE_FLAGS "-O3 -Wno-error=switch -Wno-switch -UMBEDTLS_ECP_DP_ED448_ENABLED"
 )
 set_source_files_properties(
     ${EDDSA_SRC_DIR}/fe25519.c
-    PROPERTIES COMPILE_FLAGS "-UMBEDTLS_ECP_DP_ED448_ENABLED"
+    PROPERTIES COMPILE_FLAGS "-O3 -UMBEDTLS_ECP_DP_ED448_ENABLED"
 )
+set_source_files_properties(
+    ${EDDSA_SRC_DIR}/sc25519.c
+    PROPERTIES COMPILE_FLAGS "-O3"
+)
+
+# Fail the build if a future edit drops the -O3 override.  At -Og/-O2
+# the compiler lowers 64-bit carries/borrows into data-dependent branches
+# and the Ed25519 scalar path is no longer constant-time.
+foreach(_ct_src fe25519.c eddsa_ecp_extras.c sc25519.c)
+    get_source_file_property(_ct_flags ${EDDSA_SRC_DIR}/${_ct_src} COMPILE_FLAGS)
+    if(NOT _ct_flags MATCHES "(^| )-O3( |$)")
+        message(FATAL_ERROR "Ed25519 constant-time requires -O3 for ${_ct_src}")
+    endif()
+endforeach()

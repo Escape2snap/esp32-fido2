@@ -38,29 +38,29 @@ static const uint32_t fe25519_p[8] = {
     0xffffffffU, 0xffffffffU, 0xffffffffU, 0x7fffffffU
 };
 
-static int fe25519_ge_p(const uint32_t r[8]) {
-    for (int i = 7; i >= 0; i--) {
-        if (r[i] > fe25519_p[i]) return 1;
-        if (r[i] < fe25519_p[i]) return 0;
-    }
-    return 1;
-}
+/* After the mul carry fold the value is below 2*p + 38, and add is
+   below 2*p; three fixed conditional subtractions are sufficient and
+   keep the reduction constant-time. */
+#define FE25519_REDUCE_STEPS 3
 
-static void fe25519_sub_p(uint32_t r[8]) {
-    uint64_t t;
-    uint32_t borrow = 0;
-    for (int i = 0; i < 8; i++) {
-        t = (uint64_t)r[i] - fe25519_p[i] - borrow;
-        r[i] = (uint32_t)t;
-        borrow = (uint32_t)((t >> 32) & 1);
-    }
-}
-
-/* Fully reduce r[8] mod p.  Products can be several times p before this
-   call, so subtract p until the value is canonical. */
+/* Fully reduce r[8] mod p with a fixed number of constant-time
+   conditional subtractions. */
 static void fe25519_fully_reduce(uint32_t r[8]) {
-    while (fe25519_ge_p(r)) {
-        fe25519_sub_p(r);
+    for (int s = 0; s < FE25519_REDUCE_STEPS; s++) {
+        uint32_t d[8];
+        uint64_t t;
+        uint32_t borrow = 0;
+        for (int i = 0; i < 8; i++) {
+            t = (uint64_t)r[i] - fe25519_p[i] - borrow;
+            d[i] = (uint32_t)t;
+            borrow = (uint32_t)((t >> 32) & 1);
+        }
+        /* borrow == 0 means r >= p: select d = r - p.
+           borrow == 1 means r < p: keep r. */
+        uint32_t mask = borrow - 1U;
+        for (int i = 0; i < 8; i++) {
+            r[i] = (r[i] & ~mask) | (d[i] & mask);
+        }
     }
 }
 
@@ -113,6 +113,13 @@ void fe25519_set_one(fe25519 *r)  { fe25519_set_zero(r); r->v[0] = 1; }
 void fe25519_set_int(fe25519 *r, uint32_t v) { fe25519_set_zero(r); r->v[0] = v; }
 void fe25519_copy(fe25519 *r, const fe25519 *a) { memcpy(r->v, a->v, 32); }
 
+void fe25519_cmov(fe25519 *r, const fe25519 *a, uint32_t flag) {
+    uint32_t mask = (uint32_t)0 - (flag & 1U);
+    for (int i = 0; i < 8; i++) {
+        r->v[i] = (r->v[i] & ~mask) | (a->v[i] & mask);
+    }
+}
+
 int fe25519_iseq(const fe25519 *a, const fe25519 *b) {
     uint32_t d = 0;
     for (int i = 0; i < 8; i++) d |= a->v[i] ^ b->v[i];
@@ -133,18 +140,17 @@ void fe25519_add(fe25519 *r, const fe25519 *a, const fe25519 *b) {
         out[i] = (uint32_t)t;
         c = (uint32_t)(t >> 32);
     }
-    /* A carry out of limb 7 means the sum wrapped past 2^256.  Add 19
-       (since 2^256 ≡ 38 ≡ 19 + 19? — 2^255 ≡ 19, so 2^256 ≡ 38) and
-       propagate.  For canonical inputs (< p) this cannot happen; keep
-       the branch for robustness. */
-    if (c) {
+    /* Fold a possible 2^256 carry (38 mod p) without a data-dependent
+       branch.  For canonical inputs this is a no-op. */
+    uint32_t extra = 38U * c;
+    for (int round = 0; round < 2; round++) {
         uint32_t carry = 0;
-        t = (uint64_t)out[0] + 38;
-        out[0] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        for (int i = 1; i < 8; i++) {
-            t = (uint64_t)out[i] + carry;
-            out[i] = (uint32_t)t; carry = (uint32_t)(t >> 32);
+        for (int i = 0; i < 8; i++) {
+            t = (uint64_t)out[i] + (i == 0 ? extra : 0U) + carry;
+            out[i] = (uint32_t)t;
+            carry = (uint32_t)(t >> 32);
         }
+        extra = 38U * carry;
     }
     memcpy(r->v, out, 32);
     fe25519_fully_reduce(r->v);
@@ -164,17 +170,13 @@ void fe25519_sub(fe25519 *r, const fe25519 *a, const fe25519 *b) {
     t = (uint64_t)a->v[6] - (uint64_t)b->v[6] - borrow; out[6] = (uint32_t)t; borrow = (t >> 63) & 1;
     t = (uint64_t)a->v[7] - (uint64_t)b->v[7] - borrow; out[7] = (uint32_t)t;
     borrow = (t >> 63) & 1;
-    if (borrow) {
-        /* Add back p: result was negative */
-        uint32_t carry = 0;
-        t = (uint64_t)out[0] + 0xffffffedULL;  out[0] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        t = (uint64_t)out[1] + 0xffffffffULL + carry; out[1] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        t = (uint64_t)out[2] + 0xffffffffULL + carry; out[2] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        t = (uint64_t)out[3] + 0xffffffffULL + carry; out[3] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        t = (uint64_t)out[4] + 0xffffffffULL + carry; out[4] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        t = (uint64_t)out[5] + 0xffffffffULL + carry; out[5] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        t = (uint64_t)out[6] + 0xffffffffULL + carry; out[6] = (uint32_t)t; carry = (uint32_t)(t >> 32);
-        t = (uint64_t)out[7] + 0x7fffffffULL + carry; out[7] = (uint32_t)t;
+    /* Branchless: add p iff the subtraction borrowed. */
+    uint32_t mask = (uint32_t)0 - (uint32_t)borrow;
+    uint32_t carry = 0;
+    for (int i = 0; i < 8; i++) {
+        t = (uint64_t)out[i] + (fe25519_p[i] & mask) + carry;
+        out[i] = (uint32_t)t;
+        carry = (uint32_t)(t >> 32);
     }
     memcpy(r->v, out, 32);
 }
@@ -219,13 +221,14 @@ void fe25519_mul(fe25519 *r, const fe25519 *a, const fe25519 *b) {
         r0[i] = t & 0xffffffffULL;
         carry = t >> 32;
     }
-    /* Handle the carry out of the 2^256 position: multiply by 38. */
-    if (carry) {
-        uint64_t t = r0[0] + carry * 38;
-        r0[0] = t & 0xffffffffULL;
-        carry = t >> 32;
-        for (int i = 1; i < 8 && carry; i++) {
-            t = r0[i] + carry;
+    /* Fold the carry out of the 2^256 position unconditionally, so no
+       branch depends on the product.  A few rounds are enough for the
+       8-limb product bound. */
+    for (int round = 0; round < 4; round++) {
+        uint64_t add = carry * 38;
+        carry = 0;
+        for (int i = 0; i < 8; i++) {
+            uint64_t t = r0[i] + (i == 0 ? add : 0) + carry;
             r0[i] = t & 0xffffffffULL;
             carry = t >> 32;
         }
