@@ -218,10 +218,31 @@ int cmd_pso(void) {
                 mbedtls_ecdh_free(&ctx);
                 return SW_DATA_INVALID();
             }
-            /* mbedtls_asn1_get_tag() leaves data at the point contents.  The
-               previous data-1/len+1 passed the DER length byte as the SEC1
-               point prefix, so ECDH always failed. */
-            r = mbedtls_ecdh_read_public(&ctx, data, len);
+            /* For Montgomery curves (cv25519/X25519), OpenPGP carries an
+               optional 0x40 SEC1 prefix.  mbedtls_ecdh_read_public() does
+               not understand that encoding; parse it as a Montgomery point
+               directly, matching upstream pico-openpgp. */
+            if (mbedtls_ecp_get_type(&ctx.ctx.mbed_ecdh.grp) == MBEDTLS_ECP_TYPE_MONTGOMERY) {
+                size_t montgomery_len = mbedtls_mpi_size(&ctx.ctx.mbed_ecdh.grp.P);
+                const uint8_t *peer = data;
+                if (len == montgomery_len + 1 && data[0] == 0x40) {
+                    peer = data + 1;
+                    len--;
+                }
+                if (len != montgomery_len) {
+                    mbedtls_ecdh_free(&ctx);
+                    return SW_WRONG_LENGTH();
+                }
+                r = mbedtls_ecp_point_read_binary(&ctx.ctx.mbed_ecdh.grp,
+                                                   &ctx.ctx.mbed_ecdh.Qp,
+                                                   peer, len);
+            }
+            else {
+                /* mbedtls_asn1_get_tag() leaves data at the point contents.
+                   The previous data-1/len+1 passed the DER length byte as
+                   the SEC1 point prefix, so ECDH always failed. */
+                r = mbedtls_ecdh_read_public(&ctx, data, len);
+            }
             if (r != 0) {
                 mbedtls_ecdh_free(&ctx);
                 return SW_DATA_INVALID();
