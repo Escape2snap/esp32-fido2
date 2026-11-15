@@ -19,6 +19,7 @@
 #include "openpgp.h"
 #include "do.h"
 #include "random.h"
+#include "eddsa_compat.h"
 
 int cmd_keypair_gen(void) {
     if (P2(apdu) != 0x0) {
@@ -57,8 +58,8 @@ int cmd_keypair_gen(void) {
         algo_len = algorithm_attr_p384r1[0];
     }
     else if (fid == EF_PK_DEC) {
-        algo = algorithm_attr_p384r1_ecdh + 1;
-        algo_len = algorithm_attr_p384r1_ecdh[0];
+        algo = algorithm_attr_cv25519 + 1;
+        algo_len = algorithm_attr_cv25519[0];
     }
     if (algo_ef && algo_ef->data) {
         algo = file_get_data(algo_ef);
@@ -85,10 +86,65 @@ int cmd_keypair_gen(void) {
             }
         }
         else if (algo[0] == ALGO_ECDH || algo[0] == ALGO_ECDSA || algo[0] == ALGO_EDDSA) {
-            printf("KEYPAIR ECDSA\r\n");
+            printf("KEYPAIR algo0=%02x alen=%d\r\n", algo[0], algo_len);
             mbedtls_ecp_group_id gid = get_ec_group_id_from_attr(algo + 1, algo_len - 1);
+            printf("KEYPAIR gid=%d\r\n", gid);
             if (gid == MBEDTLS_ECP_DP_NONE) {
+                printf("KEYPAIR gid NONE\r\n");
                 return SW_FUNC_NOT_SUPPORTED();
+            }
+#ifdef MBEDTLS_EDDSA_C
+            if (gid == MBEDTLS_ECP_DP_ED25519) {
+                printf("KEYPAIR Ed25519\r\n");
+                mbedtls_ecp_keypair ed;
+                mbedtls_ecp_keypair_init(&ed);
+                mbedtls_ecp_group_init(&ed.grp);
+                ed.grp.id = gid;
+                r = ed25519_generate_keypair(&ed, random_fill_iterator, NULL);
+                if (r != 0) {
+                    mbedtls_ecp_keypair_free(&ed);
+                    return SW_EXEC_ERROR();
+                }
+                r = store_keys(&ed, algo[0], fid, true);
+                make_ecdsa_response(&ed);
+                mbedtls_ecp_keypair_free(&ed);
+                if (r != PICOKEYS_OK) {
+                    return SW_EXEC_ERROR();
+                }
+                goto keygen_done;
+            }
+            if (gid == MBEDTLS_ECP_DP_ED448) {
+                return SW_FUNC_NOT_SUPPORTED(); // Ed448 not yet supported
+            }
+#endif
+            if (gid == MBEDTLS_ECP_DP_CURVE25519) {
+                printf("KEYPAIR X25519\r\n");
+                mbedtls_ecp_keypair ecdh;
+                mbedtls_ecp_keypair_init(&ecdh);
+                mbedtls_ecp_group_load(&ecdh.grp, gid);
+                uint8_t xkey[32];
+                random_fill_iterator(NULL, xkey, 32);
+                xkey[0] &= 248; xkey[31] &= 127; xkey[31] |= 64; /* RFC 7748 clamping */
+                r = mbedtls_mpi_read_binary_le(&ecdh.d, xkey, 32);
+                mbedtls_platform_zeroize(xkey, sizeof(xkey));
+                if (r != 0) {
+                    mbedtls_ecp_keypair_free(&ecdh);
+                    return SW_EXEC_ERROR();
+                }
+                ED25519_WDT_ADD();
+                r = mbedtls_ecp_keypair_calc_public(&ecdh, random_fill_iterator, NULL);
+                ED25519_WDT_DEL();
+                if (r != 0) {
+                    mbedtls_ecp_keypair_free(&ecdh);
+                    return SW_EXEC_ERROR();
+                }
+                r = store_keys(&ecdh, algo[0], fid, true);
+                make_ecdsa_response(&ecdh);
+                mbedtls_ecp_keypair_free(&ecdh);
+                if (r != PICOKEYS_OK) {
+                    return SW_EXEC_ERROR();
+                }
+                goto keygen_done;
             }
             mbedtls_ecp_keypair ecdsa;
             mbedtls_ecp_keypair_init(&ecdsa);
@@ -107,11 +163,15 @@ int cmd_keypair_gen(void) {
         else {
             return SW_FUNC_NOT_SUPPORTED();
         }
+keygen_done:
         file_t *pbef = file_search_by_fid(fid + 3, NULL, SPECIFY_EF);
         if (!pbef) {
             return SW_REFERENCE_NOT_FOUND();
         }
         r = file_put_data(pbef, res_APDU, res_APDU_size);
+        if (r != PICOKEYS_OK) {
+            return SW_EXEC_ERROR();
+        }
         if (r != PICOKEYS_OK) {
             return SW_EXEC_ERROR();
         }
@@ -131,11 +191,17 @@ int cmd_keypair_gen(void) {
         }
         // Store algorithm attribute for PSO
         const uint8_t *algo_attr = algorithm_attr_p384r1;
-        if (fid == EF_PK_DEC) algo_attr = algorithm_attr_p384r1_ecdh;
+        if (fid == EF_PK_DEC) algo_attr = algorithm_attr_cv25519;
         if (!file_has_data(algo_ef)) {
             file_put_data(algo_ef, algo_attr + 1, algo_attr[0]);
         }
         flash_commit();
+        /* Yield a few times so the main loop (core0_loop) can process
+           pending flash pages via flash_task()/low_flash_task().
+           This avoids both the Guru Meditation crash (flash ops happen
+           naturally, with interrupts enabled) and the 6A 88 error
+           (PB file data is committed before GPG reads it back). */
+        for (int _i = 0; _i < 3; _i++) vTaskDelay(1);
         return SW_OK();
     }
     else if (P1(apdu) == 0x81) { //read

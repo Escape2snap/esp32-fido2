@@ -32,6 +32,7 @@
 #include "do.h"
 #ifdef MBEDTLS_EDDSA_C
 #include "mbedtls/eddsa.h"
+#include "eddsa_compat.h"
 #endif
 
 bool has_pw1 = false;
@@ -805,10 +806,14 @@ int load_private_key_ecdsa(mbedtls_ecp_keypair *ctx, file_t *fkey, bool use_dek)
         return PICOKEYS_EXEC_ERROR;
     }
     mbedtls_platform_zeroize(kdata, sizeof(kdata));
-    r = mbedtls_ecp_keypair_calc_public(ctx, random_fill_iterator, NULL);
-    if (r != 0) {
-        mbedtls_ecp_keypair_free(ctx);
-        return PICOKEYS_EXEC_ERROR;
+    /* Skip calc_public for Ed25519 — ecdsa_sign / mbedtls_eddsa_write_signature
+     * computes the public key internally. This eliminates ~2s of redundant work. */
+    if (gid != MBEDTLS_ECP_DP_ED25519) {
+        r = mbedtls_ecp_keypair_calc_public(ctx, random_fill_iterator, NULL);
+        if (r != 0) {
+            mbedtls_ecp_keypair_free(ctx);
+            return PICOKEYS_EXEC_ERROR;
+        }
     }
     return PICOKEYS_OK;
 }
@@ -977,8 +982,16 @@ int ecdsa_sign(mbedtls_ecp_keypair *ctx, const uint8_t *data, size_t data_len, u
 
     int r = 0;
 #ifdef MBEDTLS_EDDSA_C
-    if (ctx->grp.id == MBEDTLS_ECP_DP_ED25519 || ctx->grp.id == MBEDTLS_ECP_DP_ED448) {
-           r = mbedtls_eddsa_write_signature(ctx, data, data_len, out, 114, out_len, MBEDTLS_EDDSA_PURE, NULL, 0, random_fill_iterator, NULL);
+    if (ctx->grp.id == MBEDTLS_ECP_DP_ED25519) {
+        /* Use the fixed-width fe25519/Ed25519 path rather than the
+           generic mbedtls ECP/MPI EdDSA code. */
+        r = ed25519_sign(ctx, data, data_len, out);
+        if (r == 0) {
+            *out_len = 64;
+        }
+    }
+    else if (ctx->grp.id == MBEDTLS_ECP_DP_ED448) {
+        r = mbedtls_eddsa_write_signature(ctx, data, data_len, out, 114, out_len, MBEDTLS_EDDSA_PURE, NULL, 0, random_fill_iterator, NULL);
     }
     else
 #endif

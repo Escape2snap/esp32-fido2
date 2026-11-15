@@ -41,8 +41,8 @@ Built on [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk):
 | RSA 2048/3072/4096 | ✅ |
 | ECDSA (P-256, P-384, P-521, secp256k1) | ✅ |
 | Brainpool (256r1, 384r1, 512r1) | ⚠️ software fallback |
-| Curve25519 (X25519 ECDH, feat/ed25519) | 🚧 |
-| Ed25519 (EdDSA, feat/ed25519) | 🚧 |
+| Curve25519 (X25519 ECDH, feat/ed25519) | ✅ |
+| Ed25519 (EdDSA, feat/ed25519) | ✅ |
 | On-device key generation | ✅ |
 | Key import/export (PUT DATA, IMPORT DATA) | ✅ |
 | PIN & Admin PIN (PW1/PW3) verification | ✅ |
@@ -72,13 +72,15 @@ The `feat/ed25519` branch adds Ed25519 (EdDSA) and X25519 (Curve25519 ECDH) supp
 |---------|--------|------|
 | Ed25519 key generation | ✅ | Self-contained fe25519 field arithmetic |
 | Ed25519 signing | ✅ | Both OpenPGP and FIDO2 paths |
-| X25519 ECDH | 🚧 | Key generation works, PSO:DEC ECDH path incomplete |
+| X25519 ECDH | ✅ | Key generation and PSO:DEC working (0x40 Montgomery prefix fix) |
 | Key import/export | ✅ | Ed25519 import path added |
 | WDT handling | ✅ | Task + IDLE watchdog fed during long operations |
-| Performance | ⚠️ | ~8s for Ed25519 scalar multiplication on ESP32-S3 (mbedtls_mpi) |
+| Performance | ⚠️ | Fixed fe25519/sc25519 path; on-target timing still needs measurement |
+| Constant-time signing | ✅ | Branchless field ops, add-always scalar mult, ref10 sc25519 mod-l |
 
-**Status:** On hold — the 8-second keygen time causes PC/SC interface timeouts in GPG.
-A dedicated 25519 field arithmetic implementation would bring this to milliseconds.
+**Status:** Supported on this branch. Hardware-tested on ESP32-S3 + Windows:
+FIDO2 WebAuthn, OpenPGP Ed25519 signing and cv25519 PSO:DEC decryption all work.
+The CCID path keeps the `dwFeatures = 0x40840` compatibility value.
 
 **Extra dependency:** This branch needs `polhenarejos/mbedtls` (`mbedtls-3.6-eddsa` branch)
 for EdDSA support. `third-party/` is gitignored, so clone manually:
@@ -267,10 +269,11 @@ compatibility `dwFeatures` value `0x40840`; bit `0x40` must remain set
   generation using software mbedtls_mpi can take 10+ seconds. The Task
   WDT will trigger but the operation completes. Stick to P-256 or Ed25519
   (feat/ed25519) for faster key generation.
-- **Ed25519/Curve25519 (feat/ed25519):** Work in progress. Ed25519 signing
-  works but the 8-second scalar multiplication exceeds PC/SC timeouts
-  in GPG. X25519 ECDH key generation needs completion. See the
-  `feat/ed25519` branch for details.
+- **Ed25519/Curve25519 (feat/ed25519):** Ed25519 key generation/signing and
+  X25519 PSO:DEC are implemented and hardware-tested. Ed25519 signing uses
+  constant-time scalar/field code compiled with the pinned `-O3` flags; do
+  not remove the `components/eddsa` optimization override. Target timing and
+  WDT margin still need measurement.
 
 ---
 
@@ -283,6 +286,8 @@ A complete changelog with root-cause analyses can be found in
 - #49: OpenPGP v3.4 lifecycle, DEK, PIN retry, ECDH and key handling.
 - #50: RNG, flash mapping, OTP user presence and build hardening.
 - #51: restore CCID `dwFeatures = 0x40840` for Windows PC/SC.
+- #57: make Ed25519 signing constant-time (field/scalar hardening, ref10 sc25519).
+- #58: fix cv25519/X25519 PSO:DEC Montgomery `0x40` prefix handling.
 
 PR #47 introduced a CCID `dwFeatures` regression that was fixed in PR #51;
 do not remove the `0x40` compatibility bit again.

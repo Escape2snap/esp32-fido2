@@ -1,0 +1,440 @@
+/*
+ * ESP32-FIDO2 — Edwards curve ECP functions for EdDSA
+ *
+ * Uses dedicated 256-bit field arithmetic (fe25519) for GF(2^255-19)
+ * instead of slow generic mbedtls_mpi operations.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+#include "common.h"
+
+#if defined(MBEDTLS_ECP_C)
+
+#include "mbedtls/ecp.h"
+#include "mbedtls/bignum.h"
+#include "mbedtls/sha512.h"
+#include "eddsa_compat.h"
+#include "fe25519.h"
+#include "sc25519.h"
+
+#ifdef ESP_PLATFORM
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <stdbool.h>
+
+static bool eddsa_wdt_subscribed = false;
+
+void eddsa_wdt_add(void) {
+    /* Do not remove a WDT subscription owned by another subsystem (for
+       example core0_loop).  Only delete the subscription if this call
+       successfully added the current task. */
+    if (!eddsa_wdt_subscribed && esp_task_wdt_add(NULL) == ESP_OK) {
+        eddsa_wdt_subscribed = true;
+    }
+}
+
+void eddsa_wdt_del(void) {
+    if (eddsa_wdt_subscribed) {
+        esp_task_wdt_delete(NULL);
+        eddsa_wdt_subscribed = false;
+    }
+}
+
+void eddsa_wdt_reset(void) {
+    if (eddsa_wdt_subscribed) {
+        esp_task_wdt_reset();
+    }
+    /* Yield so core0 can run; one tick per 32 scalar bits instead of
+       one tick per 8 bits cuts the added signing latency. */
+    vTaskDelay(1);
+}
+#endif
+
+/* ------------------------------------------------------------------ */
+/*  Ed25519 constants  (big-endian bytes)                              */
+/* ------------------------------------------------------------------ */
+static const unsigned char BE_Bx[32] = {
+    0x21, 0x69, 0x36, 0xD3, 0xCD, 0x6E, 0x53, 0xFE,
+    0xC0, 0xA4, 0xE2, 0x31, 0xFD, 0xD6, 0xDC, 0x5C,
+    0x69, 0x2C, 0xC7, 0x60, 0x95, 0x25, 0xA7, 0xB2,
+    0xC9, 0x56, 0x2D, 0x60, 0x8F, 0x25, 0xD5, 0x1A
+};
+static const unsigned char BE_By[32] = {
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x58
+};
+static const unsigned char BE_2d[32] = {
+    0x24, 0x06, 0xD9, 0xDC, 0x56, 0xDF, 0xFC, 0xE7,
+    0x19, 0x8E, 0x80, 0xF2, 0xEE, 0xF3, 0xD1, 0x30,
+    0x00, 0xE0, 0x14, 0x9A, 0x82, 0x83, 0xB1, 0x56,
+    0xEB, 0xD6, 0x9B, 0x94, 0x26, 0xB2, 0xF1, 0x59
+};
+/* ------------------------------------------------------------------ */
+/*  Cached field-element constants                                     */
+/* ------------------------------------------------------------------ */
+static fe25519 bX, bY, bT, d2;
+static int fe_ok = 0;
+
+static void fe_init(void) {
+    if (fe_ok) return;
+    /* BE_Bx/BE_By are stored as big-endian bytes but fe25519_from_bytes()
+       reads little-endian.  Convert via MPI to get the correct byte order. */
+    {   mbedtls_mpi _t;
+        mbedtls_mpi_init(&_t);
+        mbedtls_mpi_read_binary(&_t, BE_Bx, 32); fe25519_from_mpi(&bX, &_t);
+        mbedtls_mpi_read_binary(&_t, BE_By, 32); fe25519_from_mpi(&bY, &_t);
+        mbedtls_mpi_read_binary(&_t, BE_2d, 32); fe25519_from_mpi(&d2, &_t);
+        mbedtls_mpi_free(&_t);
+    }
+    fe25519_mul(&bT, &bX, &bY);
+    fe_ok = 1;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Edwards curve operations (a = -1, extended coordinates)            */
+/* ------------------------------------------------------------------ */
+
+/* Double: (X,Y,Z,T) = 2*(X,Y,Z,T) for the a=-1 twisted Edwards
+   curve (Ed25519).  The previous version used the a=+1 formula, which
+   silently produced a different curve point. */
+static void pt_double(fe25519 *X, fe25519 *Y, fe25519 *Z, fe25519 *T) {
+    fe25519 A, B, C, D, E, F, H;
+    fe25519_sq(&A, X);
+    fe25519_sq(&B, Y);
+    fe25519_sq(&C, Z); fe25519_add(&C, &C, &C);       /* C = 2*Z^2 */
+    fe25519_sub(&D, &B, &A);                          /* D = B - A */
+    fe25519_add(&E, X, Y); fe25519_sq(&E, &E);
+    fe25519_sub(&E, &E, &A); fe25519_sub(&E, &E, &B); /* E = 2*X*Y */
+    fe25519_sub(&F, &D, &C);                          /* F = D - C */
+    fe25519_add(&H, &A, &B); fe25519_neg(&H, &H);     /* H = -(A + B) */
+    fe25519_mul(X, &E, &F);
+    fe25519_mul(Y, &D, &H);
+    fe25519_mul(T, &E, &H);
+    fe25519_mul(Z, &F, &D);
+}
+
+/* Add: R += B where B has Z=1 (base point) */
+static void pt_add(fe25519 *X, fe25519 *Y, fe25519 *Z, fe25519 *T) {
+    fe25519 A, B, E, F, G, H, tx, ty;
+    fe25519_sub(&A, Y, X); fe25519_sub(&B, &bY, &bX);
+    fe25519_mul(&tx, &A, &B);
+    fe25519_add(&A, Y, X); fe25519_add(&B, &bY, &bX);
+    fe25519_mul(&ty, &A, &B);
+    fe25519_mul(&A, T, &bT); fe25519_mul(&A, &A, &d2);
+    fe25519_add(&B, Z, Z);
+    fe25519_sub(&E, &ty, &tx); fe25519_sub(&F, &B, &A);
+    fe25519_add(&G, &B, &A); fe25519_add(&H, &ty, &tx);
+    fe25519_mul(X, &E, &F); fe25519_mul(Y, &G, &H);
+    fe25519_mul(T, &E, &H); fe25519_mul(Z, &F, &G);
+}
+
+/* Inverse via fe25519_invert (a^{p-2} mod p) */
+
+/* ------------------------------------------------------------------ */
+/*  Scalar multiplication: (R) = scalar * base_point                   */
+/*  Left-to-right double-and-add, extended coords, 256 iterations.     */
+/*  Caller must wrap with ED25519_WDT_ADD()/DEL() if this is the      */
+/*  first/last scalarmult in a public API call.                       */
+/* ------------------------------------------------------------------ */
+static void scalarmult_base(fe25519 *X, fe25519 *Y, fe25519 *Z, fe25519 *T,
+                            const fe25519 *scalar) {
+    fe25519 tX, tY, tZ, tT;
+    fe_init();
+    fe25519_set_zero(X);
+    fe25519_set_one(Y);
+    fe25519_set_one(Z);
+    fe25519_set_zero(T);
+    for (int i = 255; i >= 0; i--) {
+        if ((i & 31) == 0) ED25519_WDT_RESET();  /* public loop index */
+        pt_double(X, Y, Z, T);
+        /* Add-always: compute R+B unconditionally, then select with a
+           constant-time conditional move based on the scalar bit. */
+        fe25519_copy(&tX, X);
+        fe25519_copy(&tY, Y);
+        fe25519_copy(&tZ, Z);
+        fe25519_copy(&tT, T);
+        pt_add(&tX, &tY, &tZ, &tT);
+        uint32_t bit = (uint32_t)fe25519_get_bit(scalar, i);
+        fe25519_cmov(X, &tX, bit);
+        fe25519_cmov(Y, &tY, bit);
+        fe25519_cmov(Z, &tZ, bit);
+        fe25519_cmov(T, &tT, bit);
+    }
+}
+
+/* Convert extended coords to affine: x = X/Z, y = Y/Z */
+static void to_affine(fe25519 *x, fe25519 *y, fe25519 *z,
+                      const fe25519 *X, const fe25519 *Y, const fe25519 *Z) {
+    fe25519 zi;
+    fe25519_invert(&zi, Z);
+    fe25519_mul(x, X, &zi);
+    fe25519_mul(y, Y, &zi);
+}
+
+/* Encode Edwards point as 32-byte little-endian Y + X sign bit */
+static void ed25519_encode_point(const fe25519 *x, const fe25519 *y,
+                                 unsigned char out[32]) {
+    fe25519 q;
+    fe25519_copy(&q, y);
+    q.v[7] |= (uint32_t)fe25519_get_bit(x, 0) << 31;
+    fe25519_to_bytes(out, &q);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Expand a 32-byte seed to (clamped_scalar, prefix) via SHA-512.    */
+/*  Used by both key generation and signing.                          */
+/* ------------------------------------------------------------------ */
+static void expand_seed(const unsigned char seed[32],
+                        fe25519 *scalar, unsigned char prefix[32]) {
+    unsigned char hash[64];
+    mbedtls_sha512(seed, 32, hash, 0);
+    hash[0] &= 248; hash[31] &= 63; hash[31] |= 64;
+    fe25519_from_bytes(scalar, hash);    /* little-endian read */
+    if (prefix) memcpy(prefix, hash + 32, 32);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Public API — called from openpgp.c and cmd_keypair_gen.c          */
+/* ------------------------------------------------------------------ */
+
+int ed25519_generate_keypair(mbedtls_ecp_keypair *key,
+                             int (*f_rng)(void *, unsigned char *, size_t),
+                             void *p_rng) {
+    int ret;
+    unsigned char seed[32];
+    fe25519 s, X, Y, Z, T, x, y;
+
+    fe_init();
+
+    /* 1. Generate random seed */
+    if (!f_rng || f_rng(p_rng, seed, 32) != 0) {
+        mbedtls_platform_zeroize(seed, sizeof(seed));
+        return MBEDTLS_ERR_ECP_RANDOM_FAILED;
+    }
+
+#if defined(CONFIG_DEBUG_ENABLE) && defined(CONFIG_DEBUG_APDU_HEX)
+    printf("[dbg] Ed25519 seed: ");
+    for (int _i = 0; _i < 32; _i++) printf("%02X", seed[_i]);
+    printf("\r\n");
+#endif
+
+    /* 2. Expand to clamped scalar */
+    expand_seed(seed, &s, NULL);
+
+    /* 3. Q = s * B */
+    ED25519_WDT_ADD();
+    scalarmult_base(&X, &Y, &Z, &T, &s);
+    ED25519_WDT_DEL();
+
+    /* 4. Convert to affine */
+    to_affine(&x, &y, &Z, &X, &Y, &Z);
+    fe25519_to_mpi(&key->Q.X, &x);
+    fe25519_to_mpi(&key->Q.Y, &y);
+    mbedtls_mpi_lset(&key->Q.Z, 1);
+
+#if defined(CONFIG_DEBUG_ENABLE) && defined(CONFIG_DEBUG_APDU_HEX)
+    {
+        unsigned char _buf[32];
+        mbedtls_mpi_write_binary_le(&key->Q.X, _buf, 32);
+        printf("[dbg] Ed25519 Q.x (LE): ");
+        for (int _i = 0; _i < 32; _i++) printf("%02X", _buf[_i]);
+        printf("\r\n");
+        mbedtls_mpi_write_binary_le(&key->Q.Y, _buf, 32);
+        printf("[dbg] Ed25519 Q.y (LE): ");
+        for (int _i = 0; _i < 32; _i++) printf("%02X", _buf[_i]);
+        printf("\r\n");
+    }
+#endif
+
+    /* 5. Set group parameters */
+    ed25519_setup_group(&key->grp);
+
+    /* 6. Store original seed as private key (not clamped scalar) */
+    mbedtls_mpi_read_binary(&key->d, seed, 32);
+
+    ret = 0;
+    mbedtls_platform_zeroize(seed, sizeof(seed));
+    return ret;
+}
+
+int ed25519_compute_public(mbedtls_ecp_keypair *key) {
+    int ret = MBEDTLS_ERR_ECP_BAD_INPUT_DATA;
+    unsigned char seed[32];
+    fe25519 s, X, Y, Z, T, x, y;
+
+    fe_init();
+
+    /* Read seed from key->d */
+    MBEDTLS_MPI_CHK(mbedtls_mpi_write_binary(&key->d, seed, 32));
+
+    /* Expand to scalar */
+    expand_seed(seed, &s, NULL);
+
+    /* Q = s * B */
+    ED25519_WDT_ADD();
+    scalarmult_base(&X, &Y, &Z, &T, &s);
+    ED25519_WDT_DEL();
+
+    /* Affine */
+    to_affine(&x, &y, &Z, &X, &Y, &Z);
+    fe25519_to_mpi(&key->Q.X, &x);
+    fe25519_to_mpi(&key->Q.Y, &y);
+    mbedtls_mpi_lset(&key->Q.Z, 1);
+    ret = 0;
+
+cleanup:
+    mbedtls_platform_zeroize(seed, sizeof(seed));
+    return ret;
+}
+
+int ed25519_sign(const mbedtls_ecp_keypair *key,
+                 const uint8_t *msg, size_t msg_len,
+                 uint8_t sig[64]) {
+    int ret = MBEDTLS_ERR_ECP_BAD_INPUT_DATA;
+    unsigned char seed[32], prefix[32], r_buf[64], h_buf[64];
+    unsigned char r_enc[32], q_enc[32];
+    unsigned char r_scalar[32], k_scalar[32], s_scalar[32], s64[64];
+    fe25519 s, Xq, Yq, Zq, Tq, Xr, Yr, Zr, Tr, x, y;
+    mbedtls_sha512_context sha;
+
+    fe_init();
+
+    /* Read seed */
+    MBEDTLS_MPI_CHK(mbedtls_mpi_write_binary(&key->d, seed, 32));
+
+    /* Expand to scalar + prefix */
+    expand_seed(seed, &s, prefix);
+
+    /* Q = scalar * B */
+    ED25519_WDT_ADD();
+    scalarmult_base(&Xq, &Yq, &Zq, &Tq, &s);
+    ED25519_WDT_RESET();
+    to_affine(&x, &y, &Zq, &Xq, &Yq, &Zq);
+    ed25519_encode_point(&x, &y, q_enc);
+
+    /* r = SHA-512(prefix || msg) mod l */
+    mbedtls_sha512_init(&sha);
+    mbedtls_sha512_starts(&sha, 0);
+    mbedtls_sha512_update(&sha, prefix, 32);
+    mbedtls_sha512_update(&sha, msg, msg_len);
+    mbedtls_sha512_finish(&sha, r_buf);
+    mbedtls_sha512_free(&sha);
+    ed25519_sc_reduce(r_buf);
+    memcpy(r_scalar, r_buf, 32);
+
+    /* R = r * B */
+    fe25519_from_bytes(&s, r_scalar);
+    ED25519_WDT_RESET();
+    scalarmult_base(&Xr, &Yr, &Zr, &Tr, &s);
+    ED25519_WDT_DEL();
+    to_affine(&x, &y, &Zr, &Xr, &Yr, &Zr);
+    ed25519_encode_point(&x, &y, r_enc);
+
+    /* k = SHA-512(R_enc || Q_enc || msg) mod l */
+    mbedtls_sha512_init(&sha);
+    mbedtls_sha512_starts(&sha, 0);
+    mbedtls_sha512_update(&sha, r_enc, 32);
+    mbedtls_sha512_update(&sha, q_enc, 32);
+    mbedtls_sha512_update(&sha, msg, msg_len);
+    mbedtls_sha512_finish(&sha, h_buf);
+    mbedtls_sha512_free(&sha);
+    ed25519_sc_reduce(h_buf);
+    memcpy(k_scalar, h_buf, 32);
+
+    /* Restore s from seed and reduce it mod l. */
+    expand_seed(seed, &s, NULL);
+    fe25519_to_bytes(s_scalar, &s);
+    memset(s64, 0, sizeof(s64));
+    memcpy(s64, s_scalar, 32);
+    ed25519_sc_reduce(s64);
+    memcpy(s_scalar, s64, 32);
+
+    /* S = (r + k * s) mod l */
+    ed25519_sc_muladd(sig + 32, k_scalar, s_scalar, r_scalar);
+    memcpy(sig, r_enc, 32);
+
+    ret = 0;
+cleanup:
+    mbedtls_platform_zeroize(seed, sizeof(seed));
+    mbedtls_platform_zeroize(prefix, sizeof(prefix));
+    mbedtls_platform_zeroize(r_buf, sizeof(r_buf));
+    mbedtls_platform_zeroize(h_buf, sizeof(h_buf));
+    mbedtls_platform_zeroize(r_scalar, sizeof(r_scalar));
+    mbedtls_platform_zeroize(k_scalar, sizeof(k_scalar));
+    mbedtls_platform_zeroize(s_scalar, sizeof(s_scalar));
+    mbedtls_platform_zeroize(s64, sizeof(s64));
+    return ret;
+}
+
+/* ------------------------------------------------------------------ */
+/*  mbedtls_ecp_point_encode — Edwards version                        */
+/* ------------------------------------------------------------------ */
+#if !defined(MBEDTLS_ECP_C)
+int mbedtls_ecp_point_encode(const mbedtls_ecp_group *grp,
+                             mbedtls_mpi *q,
+                             const mbedtls_ecp_point *pt) {
+    int ret = MBEDTLS_ERR_ECP_FEATURE_UNAVAILABLE;
+    if (mbedtls_ecp_get_type(grp) != MBEDTLS_ECP_TYPE_EDWARDS)
+        return ret;
+    if (mbedtls_mpi_cmp_int(&pt->Z, 1) != 0)
+        return MBEDTLS_ERR_MPI_BAD_INPUT_DATA;
+    MBEDTLS_MPI_CHK(mbedtls_mpi_copy(q, &pt->Y));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_set_bit(q, grp->pbits,
+                    mbedtls_mpi_get_bit(&pt->X, 0)));
+    ret = 0;
+cleanup:
+    return ret;
+}
+#endif /* !MBEDTLS_ECP_C */
+
+/* ------------------------------------------------------------------ */
+/*  mbedtls_ecp_expand_edwards — stub (no longer needed for Ed25519)  */
+/* ------------------------------------------------------------------ */
+#if !defined(MBEDTLS_ECP_C)
+#if defined(MBEDTLS_ECP_DP_ED448_ENABLED) && defined(MBEDTLS_SHA3_C)
+/* Ed448 seed expansion — kept for compatibility, not yet used */
+int mbedtls_ecp_expand_edwards(mbedtls_ecp_group *grp,
+                               const mbedtls_mpi *d,
+                               mbedtls_mpi *q,
+                               mbedtls_mpi *prefix) {
+    (void)grp; (void)d; (void)q; (void)prefix;
+    return MBEDTLS_ERR_ECP_FEATURE_UNAVAILABLE;
+}
+#else
+int mbedtls_ecp_expand_edwards(mbedtls_ecp_group *grp,
+                               const mbedtls_mpi *d,
+                               mbedtls_mpi *q,
+                               mbedtls_mpi *prefix) {
+    (void)grp; (void)d; (void)q; (void)prefix;
+    return MBEDTLS_ERR_ECP_FEATURE_UNAVAILABLE;
+}
+#endif
+#endif /* !MBEDTLS_ECP_C */
+
+/* ------------------------------------------------------------------ */
+/*  ed25519_setup_group — set group parameters for Ed25519            */
+/* ------------------------------------------------------------------ */
+int ed25519_setup_group(mbedtls_ecp_group *grp) {
+    int ret = MBEDTLS_ERR_ECP_BAD_INPUT_DATA;
+    mbedtls_ecp_group_init(grp);
+    grp->id = MBEDTLS_ECP_DP_ED25519;
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(&grp->P, (const unsigned char *)
+        "\xed\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+        "\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x7f", 32));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_sub_int(&grp->A, &grp->P, 1));  /* A = -1 */
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_string(&grp->B, 10,
+        "37095705934669439343138083508754565189542113879843219016388785533085940283555"));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(&grp->G.X, BE_Bx, 32));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(&grp->G.Y, BE_By, 32));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_lset(&grp->G.Z, 1));
+    grp->pbits = 255;
+    grp->nbits = 254;
+    ret = 0;
+cleanup:
+    if (ret != 0) mbedtls_ecp_group_free(grp);
+    return ret;
+}
+
+#endif /* MBEDTLS_ECP_C */

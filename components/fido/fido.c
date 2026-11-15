@@ -41,6 +41,7 @@
 #include "version.h"
 #include "crypto_utils.h"
 #include "otp.h"
+#include "debug_mode.h"
 
 static int fido_unload(void);
 
@@ -309,6 +310,7 @@ int verify_key(const uint8_t *appId, const uint8_t *keyHandle, mbedtls_ecp_keypa
 }
 
 int derive_key(const uint8_t *app_id, bool new_key, uint8_t *key_handle, int curve, mbedtls_ecp_keypair *key) {
+    PERF_START();
     uint8_t outk[67] = { 0 }; //SECP521R1 key is 66 bytes length
     int r = 0;
     memset(outk, 0, sizeof(outk));
@@ -318,6 +320,7 @@ int derive_key(const uint8_t *app_id, bool new_key, uint8_t *key_handle, int cur
     }
     const mbedtls_md_info_t *md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA512);
     for (size_t i = 0; i < KEY_PATH_ENTRIES; i++) {
+        WDT_FEED();
         if (new_key == true) {
             uint32_t val = 0;
             random_fill_buffer((uint8_t *) &val, sizeof(val));
@@ -340,9 +343,26 @@ int derive_key(const uint8_t *app_id, bool new_key, uint8_t *key_handle, int cur
         }
     }
     if (key != NULL) {
+#ifdef MBEDTLS_EDDSA_C
+        if (curve == MBEDTLS_ECP_DP_ED25519) {
+            if ((r = ed25519_setup_group(&key->grp)) != 0) {
+                mbedtls_platform_zeroize(outk, sizeof(outk));
+                return r;
+            }
+            mbedtls_mpi_read_binary(&key->d, outk, 32);
+            /* Compute public key Q so COSE_key() can encode the credential public key. */
+            if ((r = ed25519_compute_public(key)) != 0) {
+                mbedtls_platform_zeroize(outk, sizeof(outk));
+                return r;
+            }
+            mbedtls_platform_zeroize(outk, sizeof(outk));
+            return 0;
+        }
+#endif
         mbedtls_ecp_group_load(&key->grp, curve);
         const mbedtls_ecp_curve_info *cinfo = mbedtls_ecp_curve_info_from_grp_id(curve);
         if (cinfo == NULL) {
+            mbedtls_platform_zeroize(outk, sizeof(outk));
             return 1;
         }
         if (cinfo->bit_size % 8 != 0) {
@@ -351,11 +371,15 @@ int derive_key(const uint8_t *app_id, bool new_key, uint8_t *key_handle, int cur
         r = mbedtls_ecp_read_key(curve, key, outk, (size_t)((cinfo->bit_size + 7) / 8));
         mbedtls_platform_zeroize(outk, sizeof(outk));
         if (r != 0) {
+            PERF_END("derive_key");
             return r;
         }
-        return mbedtls_ecp_keypair_calc_public(key, random_fill_iterator, NULL);
+        r = mbedtls_ecp_keypair_calc_public(key, random_fill_iterator, NULL);
+        PERF_END("derive_key");
+        return r;
     }
     mbedtls_platform_zeroize(outk, sizeof(outk));
+    PERF_END("derive_key");
     return r;
 }
 
@@ -546,6 +570,7 @@ void init_fido(void) {
     init_otp();
 #endif
     needs_power_cycle = false;
+    new_pin_mismatches = 0;
 }
 
 int wait_button_pressed(void) {
@@ -660,10 +685,12 @@ int fido_process_apdu(void) {
     if (CLA(apdu) != 0x00 && CLA(apdu) != 0x80) {
         return SW_CLA_NOT_SUPPORTED();
     }
+    APDU_TRACE("fido-req", apdu.data, apdu.nc);
     if (cap_supported(CAP_U2F)) {
         for (const cmd_t *cmd = cmds; cmd->ins != 0x00; cmd++) {
             if (cmd->ins == INS(apdu)) {
                 int r = cmd->cmd_handler();
+                APDU_TRACE("fido-resp", res_APDU, res_APDU_size);
                 return r;
             }
         }

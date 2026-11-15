@@ -24,10 +24,20 @@ set(FIDO_SOURCES
 idf_component_register(
     SRCS ${FIDO_SOURCES}
     INCLUDE_DIRS ${FIDO_SRC_DIR}
+    PRIV_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/third-party/mbedtls-fork/include ${CMAKE_SOURCE_DIR}/components/eddsa
     REQUIRES
         picokeys
         mbedtls
         tinycbor
+)
+
+# The fork's mbedtls_config.h defines MBEDTLS_EDDSA_C /
+# MBEDTLS_ECP_DP_ED25519_ENABLED — visible because PRIV_INCLUDE_DIRS
+# points at the fork's headers ahead of ESP-IDF's.  The fork also
+# defines MBEDTLS_ECP_DP_ED448_ENABLED, which breaks the build
+# (Ed448 requires SHA3).  We undef it here.
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    -UMBEDTLS_ECP_DP_ED448_ENABLED
 )
 
 idf_component_set_property(${COMPONENT_NAME} WHOLE_ARCHIVE ON)

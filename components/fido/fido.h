@@ -25,6 +25,7 @@
 #include "mbedtls/ecdsa.h"
 #ifdef MBEDTLS_EDDSA_C
 #include "mbedtls/eddsa.h"
+#include "eddsa_compat.h"
 #endif
 #include "hid/ctap_hid.h"
 
@@ -130,6 +131,7 @@ int calculate_oath(uint8_t truncate, const uint8_t *key, size_t key_len, const u
 int encrypt_keydev_f1(const uint8_t keydev[32]);
 int resetPinUvAuthToken(void);
 int resetPersistentPinUvAuthToken(void);
+extern uint8_t new_pin_mismatches;
 
 typedef struct pinUvAuthToken {
     uint8_t *data;

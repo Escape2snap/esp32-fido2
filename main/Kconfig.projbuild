@@ -1,0 +1,61 @@
+menu "Debug Mode"
+
+    config DEBUG_ENABLE
+        bool "Enable debug mode"
+        default n
+        help
+            Master switch for all debug features below.
+            Enables APDU tracing, performance markers, and other instrumentation.
+
+    if DEBUG_ENABLE
+
+        config DEBUG_APDU_HEX
+            bool "APDU hex trace"
+            default y
+            help
+                Print raw hex dumps of all incoming APDUs and outgoing
+                responses to the serial console.  Useful for debugging
+                CTAP / CCID command flows.
+
+        config DEBUG_PERF
+            bool "Performance timing markers"
+            default y
+            help
+                Print elapsed-time markers around long operations:
+                key derivation, ECDSA signing, flash commits, etc.
+                Times are printed via ESP_LOGI with the "perf" tag.
+
+        config DEBUG_STACK
+            bool "Stack high-water monitoring"
+            default n
+            help
+                Periodically print the minimum free stack bytes for
+                core0_loop and any worker task.  Helps catch stack
+                overflows during development.
+
+        config DEBUG_WDT_FEED
+            bool "Feed hardware WDT during long loops"
+            default n
+            help
+                Call esp_task_wdt_reset() inside long-running loops
+                (scalar multiplication, flash bulk writes) so the
+                hardware watchdog does not fire during operations
+                that take > 10 s.  Required on the ed25519 branch
+                where signing can take ~8 s.
+
+        if DEBUG_WDT_FEED
+
+            config DEBUG_WDT_FEED_INTERVAL_MS
+                int "WDT feed interval (ms)"
+                range 100 5000
+                default 500
+                help
+                    How often esp_task_wdt_reset() is called inside
+                    long loops.  Lower values are safer but add
+                    overhead.
+
+        endif # DEBUG_WDT_FEED
+
+    endif # DEBUG_ENABLE
+
+endmenu
