@@ -88,6 +88,10 @@ void fe25519_set_int(fe25519 *r, uint32_t v);
 /* r = a */
 void fe25519_copy(fe25519 *r, const fe25519 *a);
 
+/* Constant-time conditional move: r = a if flag != 0, else r unchanged.
+   flag must be 0 or 1. */
+void fe25519_cmov(fe25519 *r, const fe25519 *a, uint32_t flag);
+
 /* Constant-time compare: return 0 if equal */
 int fe25519_iseq(const fe25519 *a, const fe25519 *b);
 

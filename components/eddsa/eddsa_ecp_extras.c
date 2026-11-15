@@ -114,16 +114,27 @@ static void pt_add(fe25519 *X, fe25519 *Y, fe25519 *Z, fe25519 *T) {
 /* ------------------------------------------------------------------ */
 static void scalarmult_base(fe25519 *X, fe25519 *Y, fe25519 *Z, fe25519 *T,
                             const fe25519 *scalar) {
+    fe25519 tX, tY, tZ, tT;
     fe_init();
     fe25519_set_zero(X);
     fe25519_set_one(Y);
     fe25519_set_one(Z);
     fe25519_set_zero(T);
     for (int i = 255; i >= 0; i--) {
-        if (i % 8 == 0) ED25519_WDT_RESET();
+        if (i % 8 == 0) ED25519_WDT_RESET();  /* public loop index */
         pt_double(X, Y, Z, T);
-        if (fe25519_get_bit(scalar, i))
-            pt_add(X, Y, Z, T);
+        /* Add-always: compute R+B unconditionally, then select with a
+           constant-time conditional move based on the scalar bit. */
+        fe25519_copy(&tX, X);
+        fe25519_copy(&tY, Y);
+        fe25519_copy(&tZ, Z);
+        fe25519_copy(&tT, T);
+        pt_add(&tX, &tY, &tZ, &tT);
+        uint32_t bit = (uint32_t)fe25519_get_bit(scalar, i);
+        fe25519_cmov(X, &tX, bit);
+        fe25519_cmov(Y, &tY, bit);
+        fe25519_cmov(Z, &tZ, bit);
+        fe25519_cmov(T, &tT, bit);
     }
 }
 
