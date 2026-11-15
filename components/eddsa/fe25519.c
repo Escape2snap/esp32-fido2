@@ -38,9 +38,10 @@ static const uint32_t fe25519_p[8] = {
     0xffffffffU, 0xffffffffU, 0xffffffffU, 0x7fffffffU
 };
 
-/* A product reduced by 38 can be up to about 34*p; 40 fixed
-   conditional subtractions make the reduction constant-time. */
-#define FE25519_REDUCE_STEPS 40
+/* After the mul carry fold the value is below 2*p + 38, and add is
+   below 2*p; three fixed conditional subtractions are sufficient and
+   keep the reduction constant-time. */
+#define FE25519_REDUCE_STEPS 3
 
 /* Fully reduce r[8] mod p with a fixed number of constant-time
    conditional subtractions. */

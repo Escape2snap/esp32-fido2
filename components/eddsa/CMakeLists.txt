@@ -29,11 +29,15 @@ set_source_files_properties(
     PROPERTIES COMPILE_FLAGS
         "-Wno-error=switch -Wno-switch -Wno-error=unused-function -Wno-error=unused-parameter -UMBEDTLS_ECP_DP_ED448_ENABLED"
 )
+# The field/scalar code is security-sensitive: -Og re-introduces
+# secret-dependent carry/borrow branches, while -O3 lowers it to
+# branchless carry logic on Xtensa.  Pin the optimization level here
+# instead of inheriting the project-wide debug setting.
 set_source_files_properties(
     ${EDDSA_SRC_DIR}/eddsa_ecp_extras.c
-    PROPERTIES COMPILE_FLAGS "-Wno-error=switch -Wno-switch -UMBEDTLS_ECP_DP_ED448_ENABLED"
+    PROPERTIES COMPILE_FLAGS "-O3 -Wno-error=switch -Wno-switch -UMBEDTLS_ECP_DP_ED448_ENABLED"
 )
 set_source_files_properties(
     ${EDDSA_SRC_DIR}/fe25519.c
-    PROPERTIES COMPILE_FLAGS "-UMBEDTLS_ECP_DP_ED448_ENABLED"
+    PROPERTIES COMPILE_FLAGS "-O3 -UMBEDTLS_ECP_DP_ED448_ENABLED"
 )
