@@ -1,5 +1,6 @@
 /* Ed25519 scalar arithmetic mod l.
  * Derived from the public-domain SUPERCOP ed25519 ref10 implementation.
+ * SPDX-License-Identifier: AGPL-3.0-only
  */
 #include "sc25519.h"
 #include <stdint.h>

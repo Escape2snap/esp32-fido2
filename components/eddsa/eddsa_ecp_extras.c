@@ -17,6 +17,39 @@
 #include "fe25519.h"
 #include "sc25519.h"
 
+#ifdef ESP_PLATFORM
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <stdbool.h>
+
+static bool eddsa_wdt_subscribed = false;
+
+void eddsa_wdt_add(void) {
+    /* Do not remove a WDT subscription owned by another subsystem (for
+       example core0_loop).  Only delete the subscription if this call
+       successfully added the current task. */
+    if (!eddsa_wdt_subscribed && esp_task_wdt_add(NULL) == ESP_OK) {
+        eddsa_wdt_subscribed = true;
+    }
+}
+
+void eddsa_wdt_del(void) {
+    if (eddsa_wdt_subscribed) {
+        esp_task_wdt_delete(NULL);
+        eddsa_wdt_subscribed = false;
+    }
+}
+
+void eddsa_wdt_reset(void) {
+    if (eddsa_wdt_subscribed) {
+        esp_task_wdt_reset();
+    }
+    /* Yield so core0 can run; one tick per 32 scalar bits instead of
+       one tick per 8 bits cuts the added signing latency. */
+    vTaskDelay(1);
+}
+#endif
+
 /* ------------------------------------------------------------------ */
 /*  Ed25519 constants  (big-endian bytes)                              */
 /* ------------------------------------------------------------------ */
@@ -114,7 +147,7 @@ static void scalarmult_base(fe25519 *X, fe25519 *Y, fe25519 *Z, fe25519 *T,
     fe25519_set_one(Z);
     fe25519_set_zero(T);
     for (int i = 255; i >= 0; i--) {
-        if (i % 8 == 0) ED25519_WDT_RESET();  /* public loop index */
+        if ((i & 31) == 0) ED25519_WDT_RESET();  /* public loop index */
         pt_double(X, Y, Z, T);
         /* Add-always: compute R+B unconditionally, then select with a
            constant-time conditional move based on the scalar bit. */
@@ -145,7 +178,7 @@ static void ed25519_encode_point(const fe25519 *x, const fe25519 *y,
                                  unsigned char out[32]) {
     fe25519 q;
     fe25519_copy(&q, y);
-    q.v[7] |= (fe25519_get_bit(x, 0) << 31);
+    q.v[7] |= (uint32_t)fe25519_get_bit(x, 0) << 31;
     fe25519_to_bytes(out, &q);
 }
 

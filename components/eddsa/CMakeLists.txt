@@ -46,3 +46,13 @@ set_source_files_properties(
     ${EDDSA_SRC_DIR}/sc25519.c
     PROPERTIES COMPILE_FLAGS "-O3"
 )
+
+# Fail the build if a future edit drops the -O3 override.  At -Og/-O2
+# the compiler lowers 64-bit carries/borrows into data-dependent branches
+# and the Ed25519 scalar path is no longer constant-time.
+foreach(_ct_src fe25519.c eddsa_ecp_extras.c sc25519.c)
+    get_source_file_property(_ct_flags ${EDDSA_SRC_DIR}/${_ct_src} COMPILE_FLAGS)
+    if(NOT _ct_flags MATCHES "(^| )-O3( |$)")
+        message(FATAL_ERROR "Ed25519 constant-time requires -O3 for ${_ct_src}")
+    endif()
+endforeach()
