@@ -172,7 +172,6 @@ uint8_t desc_config[MAX_TUSB_DESC_TOTAL_LEN] = {
 
 #ifdef USB_ITF_HID
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t itf) {
-    printf("report_cb %d\n", itf);
     if (itf == ITF_HID_CTAP) {
         return desc_hid_report;
     }

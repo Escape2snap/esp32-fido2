@@ -132,7 +132,6 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
     (void) report_type;
     (void) buffer;
     (void) reqlen;
-    printf("get_report %d %d %d\n", itf, report_id, report_type);
     memset(buffer, 0, reqlen);
     DEBUG_PAYLOAD(buffer, reqlen);
     if (hid_get_report_cb) {
@@ -299,7 +298,6 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
     (void) itf;
     (void) report_id;
     (void) report_type;
-    printf("set_report %d %d %d\n", itf, report_id, report_type);
     if (!hid_set_report_cb || hid_set_report_cb(itf, report_id, report_type, buffer, bufsize) == 0) {
         //usb_rx(itf, buffer, bufsize);
         if (itf == ITF_HID_CTAP) {
@@ -384,8 +382,6 @@ int driver_process_usb_packet_hid(uint16_t read) {
                     return ctap_error(CTAP1_ERR_INVALID_SEQ);
                 }
             }
-            printf("command %x\n", FRAME_CMD(ctap_req));
-            printf("len %d\n", MSG_LEN(ctap_req));
             msg_packet.len = msg_packet.current_len = 0;
             if (MSG_LEN(ctap_req) > 64 - 7) {
                 msg_packet.len = MSG_LEN(ctap_req);
