@@ -540,6 +540,8 @@ int driver_process_usb_packet_hid(uint16_t read) {
             /* CTAPHID_MSG/OTP carry an ISO 7816 APDU; the applet writes its
                response into the HID TX frame payload. */
             apdu.rdata = ctap_resp->init.data;
+            apdu.rdata_cap = (uint16_t)(USB_BUFFER_SIZE -
+                (uint16_t)((uint8_t *)apdu.rdata - (uint8_t *)hid_tx[ITF_HID_CTAP].buffer));
 
             if (msg_packet.current_len == msg_packet.len && msg_packet.len > 0) {
                 apdu_sent = apdu_process(ITF_HID_CTAP, APDU_SRC_HID, msg_packet.data, msg_packet.len);

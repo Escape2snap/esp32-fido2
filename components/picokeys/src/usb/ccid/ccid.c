@@ -180,11 +180,29 @@ void tud_vendor_rx_cb(uint8_t itf, const uint8_t *buffer, uint16_t bufsize) {
     uint32_t len = tud_vendor_n_available(itf);
     do {
         uint16_t tlen = 0;
+        if (ccid_rx[itf].w_ptr < ccid_rx[itf].r_ptr) {
+            ccid_rx[itf].w_ptr = ccid_rx[itf].r_ptr = 0;
+        }
         if (len > 0xFFFF) {
             tlen = 0xFFFF;
         }
         else {
             tlen = (uint16_t)len;
+        }
+        uint16_t space = (uint16_t)(USB_BUFFER_SIZE - ccid_rx[itf].w_ptr);
+        if (tlen > space) {
+            tlen = space;
+        }
+        if (tlen == 0) {
+            /* The RX buffer is full but there is no room for the next USB
+               packet.  Try to consume one queued message; if that makes no
+               progress, drop the stream rather than wedging the interface. */
+            uint16_t before = ccid_rx[itf].r_ptr;
+            driver_process_usb_packet_ccid(itf, 0);
+            if (ccid_rx[itf].r_ptr == before) {
+                ccid_rx[itf].r_ptr = ccid_rx[itf].w_ptr = 0;
+            }
+            break;
         }
         tlen = (uint16_t)tud_vendor_n_read(itf, ccid_rx[itf].buffer + ccid_rx[itf].w_ptr, tlen);
         ccid_rx[itf].w_ptr += tlen;
@@ -343,6 +361,8 @@ int driver_process_usb_packet_ccid(uint8_t itf, uint16_t rx_read) {
             }
             else if (ccid_header[itf]->bMessageType == CCID_XFR_BLOCK) {
                 apdu.rdata = &ccid_response[itf]->apdu;
+                apdu.rdata_cap = (uint16_t)(USB_BUFFER_SIZE -
+                    (uint16_t)((uint8_t *)apdu.rdata - (uint8_t *)ccid_tx[itf].buffer));
                 apdu_sent = apdu_process(itf, APDU_SRC_CCID, &ccid_header[itf]->apdu, (uint16_t)ccid_header[itf]->dwLength);
 #ifndef ENABLE_EMULATION
                 if (apdu_sent > 0) {
@@ -420,6 +440,12 @@ static void ccid_reset_cb(uint8_t rhport) {
        status or mounted LED from the previous enumeration. */
     ccid_status = 1;
     led_set_mode(MODE_NOT_MOUNTED);
+    if (ccid_rx != NULL && ccid_tx != NULL) {
+        for (uint8_t i = 0; i < ITF_SC_TOTAL; i++) {
+            ccid_rx[i].r_ptr = ccid_rx[i].w_ptr = 0;
+            ccid_tx[i].r_ptr = ccid_tx[i].w_ptr = 0;
+        }
+    }
     vendord_reset(rhport);
 }
 

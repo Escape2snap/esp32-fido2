@@ -51,6 +51,9 @@ PACK(struct apdu {
     uint16_t sw;
     uint8_t *rdata;
     uint16_t rlen;
+    /* Capacity of the current response buffer that rdata points into.
+       0 means "unknown" (legacy transports); new code sets it. */
+    uint16_t rdata_cap;
 
 });
 

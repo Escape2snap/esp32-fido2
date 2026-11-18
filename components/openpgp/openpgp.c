@@ -1049,7 +1049,10 @@ static const cmd_t cmds[] = {
     { INS_VERSION, cmd_version_openpgp },
     { INS_SELECT_DATA, cmd_select_data },
     { INS_GET_NEXT_DATA, cmd_get_next_data },
-    { INS_GET_BULK_DATA, cmd_get_bulk_data },
+    /* INS_GET_BULK_DATA (0xCE) is disabled until bulk_cmd() has a strict
+       response-capacity contract: one unauthenticated APDU could otherwise
+       write hundreds of KB into the 2038-byte CCID TX buffer. */
+    // { INS_GET_BULK_DATA, cmd_get_bulk_data },
     { 0x00, NULL }
 };
 

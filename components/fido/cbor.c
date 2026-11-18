@@ -151,6 +151,7 @@ int cbor_process(uint8_t last_cmd, const uint8_t *data, size_t len) {
     cbor_cmd = last_cmd;
     ctap_resp->init.data[0] = 0;
     res_APDU = ctap_resp->init.data + 1;
+    apdu.rdata_cap = USB_BUFFER_SIZE >= 8 ? (uint16_t)(USB_BUFFER_SIZE - 8) : 0;
     res_APDU_size = 0;
     return 2; // CBOR processing
 }

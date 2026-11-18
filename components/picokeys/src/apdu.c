@@ -33,6 +33,10 @@ extern uint32_t timeout;
 bool is_chaining = false;
 uint8_t chain_buf[2038];
 uint8_t *chain_ptr = NULL;
+/* Reassembled chained APDU is built here instead of inside the transport RX
+   buffer.  A leading chain (up to 2038) plus the final block (up to 2031)
+   must fit, hence 4096. */
+static uint8_t chain_merge[4096];
 
 struct apdu apdu;
 
@@ -58,9 +62,16 @@ int process_apdu(void) {
     }
     else {
         if (is_chaining) {
-            memmove(apdu.data + (chain_ptr - chain_buf), apdu.data, apdu.nc);
-            memcpy(apdu.data, chain_buf, chain_ptr - chain_buf);
-            apdu.nc += (uint16_t)(chain_ptr - chain_buf);
+            size_t chain_used = (size_t)(chain_ptr - chain_buf);
+            if (chain_used + apdu.nc > sizeof(chain_merge)) {
+                is_chaining = false;
+                chain_ptr = chain_buf;
+                return SW_WRONG_LENGTH();
+            }
+            memcpy(chain_merge + chain_used, apdu.data, apdu.nc);
+            memcpy(chain_merge, chain_buf, chain_used);
+            apdu.data = chain_merge;
+            apdu.nc += (uint32_t)chain_used;
             is_chaining = false;
         }
     }
@@ -101,6 +112,13 @@ static uint16_t apdu_send_error(uint8_t itf, apdu_src_t src, uint16_t sw) {
 #endif
 #endif
     return 0;
+}
+
+static bool apdu_resp_range_ok(intptr_t off, uint32_t size) {
+    if (apdu.rdata_cap == 0) {
+        return true; /* legacy call site without capacity information */
+    }
+    return off >= 0 && (uint64_t)off + size <= (uint64_t)apdu.rdata_cap;
 }
 
 uint16_t apdu_process(uint8_t itf, apdu_src_t src, const uint8_t *buffer, uint16_t buffer_size) {
@@ -164,9 +182,20 @@ uint16_t apdu_process(uint8_t itf, apdu_src_t src, const uint8_t *buffer, uint16
             return apdu_send_error(itf, src, 0x6985);
         }
         timeout_stop();
+        intptr_t resp_off = (intptr_t)((uintptr_t)rdata_gr - (uintptr_t)apdu.rdata);
+        if (!apdu_resp_range_ok(resp_off, 2)) {
+            apdu.rlen = 0;
+            rdata_gr = NULL;
+            return apdu_send_error(itf, src, 0x6985);
+        }
         rdata_gr[0] = rdata_bk >> 8;
         rdata_gr[1] = rdata_bk & 0xff;
         if (apdu.rlen <= apdu.ne) {
+            if (!apdu_resp_range_ok(resp_off, (uint32_t)apdu.rlen + 2)) {
+                apdu.rlen = 0;
+                rdata_gr = NULL;
+                return apdu_send_error(itf, src, 0x6985);
+            }
 #ifndef ENABLE_EMULATION
 #ifdef USB_ITF_HID
             if (src == APDU_SRC_HID) {
@@ -187,6 +216,13 @@ uint16_t apdu_process(uint8_t itf, apdu_src_t src, const uint8_t *buffer, uint16
             rdata_gr = apdu.rdata;
         }
         else {
+            /* The completion handler writes the next chunk at the same
+               offset relative to rdata, size ne+2. */
+            if (!apdu_resp_range_ok(resp_off, (uint32_t)apdu.ne + 2)) {
+                apdu.rlen = 0;
+                rdata_gr = NULL;
+                return apdu_send_error(itf, src, 0x6985);
+            }
             rdata_gr += apdu.ne;
             rdata_bk = (rdata_gr[0] << 8) | rdata_gr[1];
             rdata_gr[0] = 0x61;
@@ -270,6 +306,10 @@ done:   ;
 }
 
 void apdu_finish(void) {
+    if (apdu.rdata_cap != 0 && (uint32_t)apdu.rlen + 2 > apdu.rdata_cap) {
+        apdu.rlen = apdu.rdata_cap >= 2 ? (uint16_t)(apdu.rdata_cap - 2) : 0;
+        apdu.sw = make_uint16_be(0x67, 0x00);
+    }
     put_uint16_be(apdu.sw, apdu.rdata + apdu.rlen);
     // timeout_stop();
 #ifndef ENABLE_EMULATION
@@ -308,6 +348,12 @@ int bulk_cmd(int (*cmd)(void)) {
     uint16_t rapdu_size = 0;
     uint8_t *top = apdu.data + apdu.nc;
     while (p < top) {
+        if ((size_t)(top - p) < 3) {
+            return SW_WRONG_LENGTH();
+        }
+        if (p[2] > (size_t)(top - (p + 3))) {
+            return SW_WRONG_LENGTH();
+        }
         P1(apdu) = p[0];
         P2(apdu) = p[1];
         apdu.nc = p[2];
