@@ -27,6 +27,10 @@
 #include "driver/gpio.h"
 #endif
 #include "usb.h"
+#include "flash.h"
+#if defined(ESP_PLATFORM)
+#include "esp_task_wdt.h"
+#endif
 
 extern void execute_tasks(void);
 
@@ -113,6 +117,15 @@ bool button_wait(void) {
     req_button_pending = true;
     while (picok_board_button_read() == false && cancel_button == false) {
         execute_tasks();
+        /* core0_loop is blocked in this function while waiting for the user.
+           Keep draining pending flash commits (PIN retry counters, signature
+           counters) and feed the task watchdog, otherwise a concurrent
+           flash_commit_sync() always times out and the update is lost on
+           power loss. */
+        flash_task();
+#ifdef ESP_PLATFORM
+        esp_task_wdt_reset();
+#endif
         //sleep_ms(10);
         if (start_button + button_timeout < board_millis()) { /* timeout */
             timeout = true;
@@ -122,6 +135,10 @@ bool button_wait(void) {
     if (!timeout) {
         while (picok_board_button_read() == true && cancel_button == false) {
             execute_tasks();
+            flash_task();
+#ifdef ESP_PLATFORM
+            esp_task_wdt_reset();
+#endif
             //sleep_ms(10);
             if (start_button + 15000 < board_millis()) { /* timeout */
                 timeout = true;
