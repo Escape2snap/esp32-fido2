@@ -65,9 +65,18 @@ int cmd_keypair_gen(void) {
         algo = file_get_data(algo_ef);
         algo_len = file_get_size(algo_ef);
     }
+    if (algo_len < 1) {
+        return SW_WRONG_DATA();
+    }
     if (P1(apdu) == 0x80) { //generate
         if (algo[0] == ALGO_RSA) {
+            if (algo_len < 3) {
+                return SW_WRONG_DATA();
+            }
             int exponent = 65537, nlen = (algo[1] << 8) | algo[2];
+            if (nlen != 2048 && nlen != 3072 && nlen != 4096) {
+                return SW_WRONG_DATA();
+            }
             printf("KEYPAIR RSA %d\r\n", nlen);
             //if (nlen != 2048 && nlen != 4096)
             //    return SW_FUNC_NOT_SUPPORTED();
@@ -86,6 +95,9 @@ int cmd_keypair_gen(void) {
             }
         }
         else if (algo[0] == ALGO_ECDH || algo[0] == ALGO_ECDSA || algo[0] == ALGO_EDDSA) {
+            if (algo_len < 2) {
+                return SW_WRONG_DATA();
+            }
             printf("KEYPAIR algo0=%02x alen=%d\r\n", algo[0], algo_len);
             mbedtls_ecp_group_id gid = get_ec_group_id_from_attr(algo + 1, algo_len - 1);
             printf("KEYPAIR gid=%d\r\n", gid);
