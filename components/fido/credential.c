@@ -242,7 +242,10 @@ int credential_create(CborCharString *rpId, CborByteString *userId, CborCharStri
     CborError error = CborNoError;
     uint8_t rp_id_hash[32];
     mbedtls_sha256((uint8_t *) rpId->data, rpId->len, rp_id_hash, 0);
-    cbor_encoder_init(&encoder, cred_id + 4 + 12, MAX_CRED_ID_LENGTH - (4 + 12 + 16), 0);
+    /* Reserve the trailing silent tag as well; otherwise rs can reach
+       MAX_CRED_ID_LENGTH-(4+12+16) and the silent tag writes past cred_id. */
+    cbor_encoder_init(&encoder, cred_id + CRED_PROTO_LEN + CRED_IV_LEN,
+                      MAX_CRED_ID_LENGTH - (CRED_PROTO_LEN + CRED_IV_LEN + CRED_TAG_LEN + CRED_SILENT_TAG_LEN), 0);
     CBOR_CHECK(cbor_encoder_create_map(&encoder, &mapEncoder,  CborIndefiniteLength));
     CBOR_APPEND_KEY_UINT_VAL_STRING(mapEncoder, 0x01, *rpId);
     CBOR_CHECK(cbor_encode_uint(&mapEncoder, 0x02));

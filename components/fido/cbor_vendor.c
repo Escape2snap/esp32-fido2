@@ -35,6 +35,10 @@ extern bool has_keydev_dec;
 mse_t mse = { .init = false };
 
 int mse_decrypt_ct(uint8_t *data, size_t len) {
+    /* Callers pass a backup ciphertext: 12-byte IV + 16-byte tag + data. */
+    if (data == NULL || len < 32 || len > 1024) {
+        return -1;
+    }
     mbedtls_chachapoly_context chatx;
     mbedtls_chachapoly_init(&chatx);
     mbedtls_chachapoly_setkey(&chatx, mse.key_enc + 12);
@@ -109,8 +113,17 @@ static int cbor_vendor_generic(uint8_t cmd, const uint8_t *data, size_t len) {
             CBOR_CHECK(cbor_encode_byte_string(&mapEncoder, file_get_data(ef_keydev_enc), file_get_size(ef_keydev_enc)));
         }
         else if (vendorCmd == 0x02) {
-            if (vendorParam.present == false) {
+            /* Restoring a backup rewrites the device master key.  This must
+               only be possible after a successful UNLOCK, otherwise any host
+               can destroy the device key material. */
+            if (has_keydev_dec == false) {
+                CBOR_ERROR(CTAP2_ERR_PIN_AUTH_INVALID);
+            }
+            if (vendorParam.present == false || (vendorParam.len != 60 && vendorParam.len != 89)) {
                 CBOR_ERROR(CTAP2_ERR_MISSING_PARAMETER);
+            }
+            if (ef_keydev_enc == NULL || ef_keydev == NULL) {
+                CBOR_ERROR(CTAP1_ERR_OTHER);
             }
             uint8_t zeros[32];
             memset(zeros, 0, sizeof(zeros));
@@ -126,7 +139,7 @@ static int cbor_vendor_generic(uint8_t cmd, const uint8_t *data, size_t len) {
     }
     else if (cmd == CTAP_VENDOR_MSE) {
         if (vendorCmd == 0x01) { // KeyAgreement
-            if (kax.present == false || kay.present == false || alg == 0) {
+            if (kax.present == false || kay.present == false || kax.len != 32 || kay.len != 32 || alg == 0) {
                 CBOR_ERROR(CTAP2_ERR_MISSING_PARAMETER);
             }
 
@@ -179,6 +192,9 @@ static int cbor_vendor_generic(uint8_t cmd, const uint8_t *data, size_t len) {
         if (mse.init == false) {
             CBOR_ERROR(CTAP2_ERR_NOT_ALLOWED);
         }
+        if (vendorParam.present == false || vendorParam.len < 32) {
+            CBOR_ERROR(CTAP2_ERR_MISSING_PARAMETER);
+        }
 
         mbedtls_chachapoly_context chatx;
         int ret = mse_decrypt_ct(vendorParam.data, vendorParam.len);
@@ -192,6 +208,9 @@ static int cbor_vendor_generic(uint8_t cmd, const uint8_t *data, size_t len) {
 
         uint8_t *keyenc = file_get_data(ef_keydev_enc);
         size_t keyenc_len = file_get_size(ef_keydev_enc);
+        if (keyenc == NULL || (keyenc_len != 60 && keyenc_len != 89)) {
+            CBOR_ERROR(CTAP2_ERR_INTEGRITY_FAILURE);
+        }
         mbedtls_chachapoly_init(&chatx);
         mbedtls_chachapoly_setkey(&chatx, vendorParam.data);
         ret = mbedtls_chachapoly_auth_decrypt(&chatx, sizeof(keydev_dec), keyenc, NULL, 0, keyenc + keyenc_len - 16, keyenc + 12, keydev_dec);

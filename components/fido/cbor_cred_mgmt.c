@@ -30,6 +30,16 @@ uint8_t cred_counter = 1;
 uint8_t cred_total = 0;
 CborByteString rpIdHashx = { 0 };
 
+static bool paut_rp_hash_matches(const CborByteString *rpIdHash) {
+    if (paut.has_rp_id == false) {
+        return true;
+    }
+    if (rpIdHash == NULL || rpIdHash->data == NULL || rpIdHash->len != 32) {
+        return false;
+    }
+    return memcmp(paut.rp_id_hash, rpIdHash->data, 32) == 0;
+}
+
 int cbor_cred_mgmt(const uint8_t *data, size_t len) {
     CborParser parser;
     CborValue map;
@@ -235,7 +245,7 @@ int cbor_cred_mgmt(const uint8_t *data, size_t len) {
                 }
                 if (is_preview == false &&
                     (!(paut.permissions & CTAP_PERMISSION_CM) ||
-                    (paut.has_rp_id == true && memcmp(paut.rp_id_hash, rpIdHash.data, 32) != 0))) {
+                    (!paut_rp_hash_matches(&rpIdHash)))) {
                     CBOR_ERROR(CTAP2_ERR_PIN_AUTH_INVALID);
                 }
             }
@@ -379,7 +389,7 @@ int cbor_cred_mgmt(const uint8_t *data, size_t len) {
         if (verify((uint8_t)pinUvAuthProtocol, paut.data, raw_subpara - 1, (uint16_t)(raw_subpara_len + 1), pinUvAuthParam.data) != CborNoError) {
             CBOR_ERROR(CTAP2_ERR_PIN_AUTH_INVALID);
         }
-        if (is_preview == false && (!(paut.permissions & CTAP_PERMISSION_CM) || (paut.has_rp_id == true && memcmp(paut.rp_id_hash, rpIdHash.data, 32) != 0))) {
+        if (is_preview == false && (!(paut.permissions & CTAP_PERMISSION_CM) || (!paut_rp_hash_matches(&rpIdHash)))) {
             CBOR_ERROR(CTAP2_ERR_PIN_AUTH_INVALID);
         }
         for (int i = 0; i < MAX_RESIDENT_CREDENTIALS; i++) {
@@ -420,7 +430,7 @@ int cbor_cred_mgmt(const uint8_t *data, size_t len) {
         if (verify((uint8_t)pinUvAuthProtocol, paut.data, raw_subpara - 1, (uint16_t)(raw_subpara_len + 1), pinUvAuthParam.data) != CborNoError) {
             CBOR_ERROR(CTAP2_ERR_PIN_AUTH_INVALID);
         }
-        if (is_preview == false && (!(paut.permissions & CTAP_PERMISSION_CM) || (paut.has_rp_id == true && memcmp(paut.rp_id_hash, rpIdHash.data, 32) != 0))) {
+        if (is_preview == false && (!(paut.permissions & CTAP_PERMISSION_CM) || (!paut_rp_hash_matches(&rpIdHash)))) {
             CBOR_ERROR(CTAP2_ERR_PIN_AUTH_INVALID);
         }
         for (int i = 0; i < MAX_RESIDENT_CREDENTIALS; i++) {
