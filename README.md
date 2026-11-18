@@ -100,8 +100,12 @@ Ed25519 (SIG/AUT) and X25519 (DEC) can be selected with
 
 ### Clone and dependencies
 
-`third-party/` is gitignored, so the two external dependencies must be
-cloned manually.
+`third-party/` is gitignored. Use the pinned setup script (recommended):
+
+    ./tools/setup-deps.sh
+
+It checks out the exact commits and applies the Ed448-off patch required by
+the mbedTLS fork. The manual steps below are kept for reference.
 
 ```bash
 git clone https://github.com/Escape2snap/esp32-fido2.git
