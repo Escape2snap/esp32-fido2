@@ -1291,6 +1291,9 @@ static int cmd_attestation(void) {
     if (r <= 0) {
         return SW_EXEC_ERROR();
     }
+    if (apdu.rdata_cap != 0 && (uint32_t)r + 2 > apdu.rdata_cap) {
+        return SW_FILE_FULL();
+    }
     memcpy(res_APDU, abuf + sizeof(abuf) - r, r);
     res_APDU_size = r;
     return SW_OK();
