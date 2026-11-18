@@ -405,8 +405,12 @@ int cbor_cred_mgmt(const uint8_t *data, size_t len) {
                 }
                 for (int j = 0; j < MAX_RESIDENT_CREDENTIALS; j++) {
                     file_t *rp_ef = file_search((uint16_t)(EF_RP + j));
-                    if (file_has_data(rp_ef) && memcmp(file_get_data(rp_ef) + 1, rp_id_hash, 32) == 0) {
+                    if (file_has_data(rp_ef) && file_get_size(rp_ef) >= 1 + 32 &&
+                        memcmp(file_get_data(rp_ef) + 1, rp_id_hash, 32) == 0) {
                         uint8_t *rp_data = (uint8_t *) calloc(1, file_get_size(rp_ef));
+                        if (rp_data == NULL) {
+                            CBOR_ERROR(CTAP2_ERR_PROCESSING);
+                        }
                         memcpy(rp_data, file_get_data(rp_ef), file_get_size(rp_ef));
                         rp_data[0] -= 1;
                         if (rp_data[0] == 0) {

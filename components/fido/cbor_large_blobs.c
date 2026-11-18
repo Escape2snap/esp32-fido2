@@ -27,6 +27,12 @@
 static uint64_t expectedLength = 0, expectedNextOffset = 0;
 uint8_t temp_lba[MAX_LARGE_BLOB_SIZE];
 
+void cbor_large_blobs_reset(void) {
+    expectedLength = 0;
+    expectedNextOffset = 0;
+    mbedtls_platform_zeroize(temp_lba, sizeof(temp_lba));
+}
+
 int cbor_large_blobs(const uint8_t *data, size_t len) {
     CborParser parser;
     CborValue map;

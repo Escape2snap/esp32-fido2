@@ -493,6 +493,9 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
                 }
                 numberOfCredentialsx = numberOfCredentials;
                 datax = (uint8_t *) calloc(1, len);
+                if (datax == NULL) {
+                    CBOR_ERROR(CTAP2_ERR_PROCESSING);
+                }
                 memcpy(datax, data, len);
                 lenx = len;
                 flagsx = flags;
@@ -621,6 +624,9 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
 
     size_t aut_data_len = 32 + 1 + 4 + ext_len;
     aut_data = (uint8_t *) calloc(1, aut_data_len + clientDataHash.len);
+    if (aut_data == NULL) {
+        CBOR_ERROR(CTAP1_ERR_OTHER);
+    }
     uint8_t *pa = aut_data;
     memcpy(pa, rp_id_hash, 32); pa += 32;
     *pa++ = flags;
