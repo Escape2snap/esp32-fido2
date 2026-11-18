@@ -263,11 +263,16 @@ int cbor_config(const uint8_t *data, size_t len) {
         if (file_has_data(ef_pin) && file_get_data(ef_pin)[1] < newMinPinLength) {
             forceChangePin = ptrue;
         }
-        if (forceChangePin) {
+        /* forceChangePin is a tri-state pointer (_btrue/_bfalse/NULL); a
+           non-NULL pointer alone does not mean "force change". */
+        if (forceChangePin == ptrue) {
             resetPersistentPinUvAuthToken();
             resetPinUvAuthToken();
         }
         uint8_t *dataf = (uint8_t *) calloc(1, 2 + minPinLengthRPIDs_len * 32);
+        if (dataf == NULL) {
+            CBOR_ERROR(CTAP2_ERR_PROCESSING);
+        }
         dataf[0] = (uint8_t)newMinPinLength;
         dataf[1] = forceChangePin == ptrue ? 1 : 0;
         for (size_t m = 0; m < minPinLengthRPIDs_len; m++) {
