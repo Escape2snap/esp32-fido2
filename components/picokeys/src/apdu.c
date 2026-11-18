@@ -294,7 +294,10 @@ done:   ;
         flag = EV_EXEC_FINISHED;
         queue_add_blocking(&card_to_usb_q, &flag);
 #ifdef ESP_PLATFORM
-        vTaskDelay(pdMS_TO_TICKS(10));
+        /* Yield to the higher-priority USB task.  The next iteration blocks
+           on usb_to_card_q, so this does not busy-wait and removes a fixed
+           10 ms latency per APDU. */
+        vTaskDelay(0);
 #endif
     }
     //printf("EXIT !!!!!!\n");
