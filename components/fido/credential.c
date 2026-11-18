@@ -470,6 +470,9 @@ int credential_store(const uint8_t *cred_id, size_t cred_id_len, const uint8_t *
             }
             continue;
         }
+        if (file_get_size(ef) < 32 + CRED_RESIDENT_LEN) {
+            continue;
+        }
         if (memcmp(file_get_data(ef), rp_id_hash, 32) != 0) {
             continue;
         }
@@ -492,10 +495,17 @@ int credential_store(const uint8_t *cred_id, size_t cred_id_len, const uint8_t *
     uint8_t cred_idr[CRED_RESIDENT_LEN] = {0};
     credential_derive_resident(cred_id, cred_id_len, cred_idr);
     uint8_t *data = (uint8_t *) calloc(1, cred_id_len + 32 + CRED_RESIDENT_LEN);
+    if (data == NULL) {
+        return -1;
+    }
     memcpy(data, rp_id_hash, 32);
     memcpy(data + 32, cred_idr, CRED_RESIDENT_LEN);
     memcpy(data + 32 + CRED_RESIDENT_LEN, cred_id, cred_id_len);
     file_t *ef = file_new((uint16_t)(EF_CRED + sloti));
+    if (ef == NULL) {
+        free(data);
+        return -1;
+    }
     file_put_data(ef, data, (uint16_t)cred_id_len + 32 + CRED_RESIDENT_LEN);
     free(data);
 
@@ -509,7 +519,8 @@ int credential_store(const uint8_t *cred_id, size_t cred_id_len, const uint8_t *
                 }
                 continue;
             }
-            if (memcmp(file_get_data(ef) + 1, rp_id_hash, 32) == 0) {
+            if (file_get_size(ef) >= 1 + 32 &&
+                memcmp(file_get_data(ef) + 1, rp_id_hash, 32) == 0) {
                 sloti = i;
                 break;
             }
@@ -624,6 +635,9 @@ bool credential_is_resident(const uint8_t *cred_id, size_t cred_id_len) {
 }
 
 int credential_load_resident(const file_t *ef, const uint8_t *rp_id_hash, Credential *cred) {
+    if (ef == NULL || !file_has_data(ef) || file_get_size(ef) < 32) {
+        return CTAP2_ERR_NO_CREDENTIALS;
+    }
     if (credential_is_resident(file_get_data(ef) + 32, file_get_size(ef) - 32)) {
         int ret = credential_load(file_get_data(ef) + 32 + CRED_RESIDENT_LEN, file_get_size(ef) - 32 - CRED_RESIDENT_LEN, rp_id_hash, cred);
         if (ret == 0) {
