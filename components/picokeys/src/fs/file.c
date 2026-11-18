@@ -337,11 +337,20 @@ uint8_t *file_get_data(const file_t *tf) {
     if (!tf || !tf->data) {
         return NULL;
     }
+    /* FILE_DATA_FUNC EFs store a function pointer in tf->data, not a flash
+       offset.  Callers must invoke the function instead (see parse_do() and
+       file_process_fci()); returning the pointer bytes would crash. */
+    if ((tf->type & FILE_DATA_FUNC) == FILE_DATA_FUNC) {
+        return NULL;
+    }
     return file_read(tf->data + sizeof(uint16_t));
 }
 
 uint16_t file_get_size(const file_t *tf) {
     if (!tf || !tf->data) {
+        return 0;
+    }
+    if ((tf->type & FILE_DATA_FUNC) == FILE_DATA_FUNC) {
         return 0;
     }
     return file_read_uint16(tf->data);
