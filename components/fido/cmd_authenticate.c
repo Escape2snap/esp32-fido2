@@ -34,6 +34,11 @@ int cmd_authenticate(void) {
     if (req->keyHandleLen < KEY_HANDLE_LEN) {
         return SW_INCORRECT_PARAMS();
     }
+    /* keyHandleLen comes from the request; make sure the key handle actually
+       fits in the bytes delivered by the transport. */
+    if (req->keyHandleLen > apdu.nc - (CTAP_CHAL_SIZE + CTAP_APPID_SIZE + 1)) {
+        return SW_WRONG_DATA();
+    }
     if (P1(apdu) == CTAP_AUTH_ENFORCE && wait_button_pressed() > 0) {
         return SW_CONDITIONS_NOT_SATISFIED();
     }
@@ -42,6 +47,10 @@ int cmd_authenticate(void) {
     mbedtls_ecp_keypair_init(&key);
     int ret = 0;
     uint8_t *tmp_kh = (uint8_t *) calloc(1, req->keyHandleLen);
+    if (tmp_kh == NULL) {
+        mbedtls_ecp_keypair_free(&key);
+        return SW_EXEC_ERROR();
+    }
     memcpy(tmp_kh, req->keyHandle, req->keyHandleLen);
     if (credential_verify(tmp_kh, req->keyHandleLen, req->appId, false) == 0) {
         ret = fido_load_key(FIDO2_CURVE_P256, req->keyHandle, &key);
