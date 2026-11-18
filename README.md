@@ -4,7 +4,7 @@ ESP32-FIDO2 turns an **ESP32-S3** into a USB security key that combines:
 
 - **FIDO2 / CTAP 2.1 / U2F** — WebAuthn, resident credentials, PIN/UV
 - **OpenPGP card v3.4** — GnuPG, SSH, S/MIME, PSO:CDS and PSO:DEC
-- **OATH TOTP/HOTP** — OATH applet (Yubico OTP is not implemented)
+- **PIV** — Yubico-compatible PIV applet (management-key protected)
 
 The firmware is a standalone ESP-IDF project built on
 [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk). It does
@@ -17,7 +17,8 @@ not target the Raspberry Pi Pico.
 | FIDO2 / WebAuthn / U2F | Working |
 | OpenPGP RSA / NIST ECC | Working |
 | OpenPGP Ed25519 / X25519 | Working (hardware-tested) |
-| OATH TOTP/HOTP | Working |
+| PIV | Working (management-key protected) |
+| OATH TOTP/HOTP | Not built (applet removed) |
 | Yubico OTP | Not implemented |
 | Windows CCID + HID | Working; one reconnect may be needed after first enumeration |
 
@@ -42,7 +43,7 @@ Hardware-verified on an ESP32-S3 + Windows host:
 | Credential management | Yes |
 | Enterprise attestation | Yes |
 | ECDSA P-256 / P-384 / P-521 / secp256k1 | Yes |
-| OATH TOTP/HOTP | Yes |
+| OATH TOTP/HOTP | No (applet removed) |
 | Yubico OTP | No |
 
 ### OpenPGP Smartcard
@@ -88,7 +89,7 @@ Ed25519 (SIG/AUT) and X25519 (DEC) can be selected with
 | LED | NeoPixel WS2812 on GPIO48 |
 | User-presence button | BOOT button, GPIO0 |
 | USB | CCID smartcard + HID FIDO2 composite device |
-| Accelerators | AES, SHA, RSA/MPI accelerator; NIST P-256/P-192 ECC via the RSA/MPI engine |
+| Accelerators | AES, SHA, RSA/MPI (4096-bit); no dedicated ECC accelerator — ECC and EdDSA run in software |
 
 ## Quick Start
 
@@ -217,11 +218,10 @@ Browser test: <https://webauthn.io>
 
 Press the **BOOT button** when the browser asks for user presence.
 
-### OATH
+### OATH / OTP
 
-The OATH applet supports TOTP/HOTP and can be used with
-`ykman oath` (subject to the YubiKey OATH command subset implemented by
-pico-keys). Yubico OTP is not implemented.
+Not supported in this firmware. The OATH/OTP applet sources were removed;
+only FIDO2/U2F, OpenPGP and PIV are built.
 
 ## Platform Notes
 
@@ -266,7 +266,7 @@ CCID is interface 0 for Windows compatibility.
 |------|---------|
 | `components/picokeys` | USB CCID/HID, flash filesystem, LED, RNG, APDU routing |
 | `components/openpgp` | OpenPGP card v3.4, PSO, PIN/DEK, key management |
-| `components/fido` | CTAP2.1, WebAuthn, PIN/UV, OATH |
+| `components/fido` | CTAP2.1, WebAuthn, PIN/UV |
 | `components/eddsa` | Ed25519/X25519 field and scalar code |
 | `components/tinycbor` | tinycbor build wrapper |
 | `third-party/mbedtls-fork` | EdDSA-capable mbedTLS fork |
@@ -282,12 +282,19 @@ Configured in `sdkconfig.defaults`:
 |-------------|---------|
 | AES | `CONFIG_MBEDTLS_HARDWARE_AES=y` |
 | SHA | `CONFIG_MBEDTLS_HARDWARE_SHA=y` |
-| ECC | `CONFIG_MBEDTLS_HARDWARE_ECC=y` |
-| GCM | `CONFIG_MBEDTLS_HARDWARE_GCM=y` |
-| MPI | `CONFIG_MBEDTLS_HARDWARE_MPI=y` |
+| MPI | `CONFIG_MBEDTLS_HARDWARE_MPI=y` (4096-bit) |
 
-NIST P-256/P-192 point multiplication uses the ESP32-S3 RSA/MPI
-accelerator. P-384, P-521 and Brainpool use software fallbacks.
+ESP32-S3 has **no dedicated ECC accelerator**: `SOC_ECC_SUPPORTED` is
+not defined for this target, so `CONFIG_MBEDTLS_HARDWARE_ECC` is
+unavailable and ECC point multiplication (P-256/P-384/P-521, Brainpool,
+secp256k1) runs in software. Ed25519/X25519 use the software field and
+scalar code in `components/eddsa`. The RSA/MPI accelerator only speeds
+big-integer operations used by RSA and some mbedTLS bignum paths; it is
+not a dedicated ECC engine.
+
+`sdkconfig.defaults` also selects `-O2` (`CONFIG_COMPILER_OPTIMIZATION_PERF`),
+an 8192-byte main task stack, and disables the USB-Serial-JTAG module/console
+(UART remains available for development).
 
 ### USB Interface Mode
 
@@ -334,9 +341,13 @@ random 32-byte device salt (first boot)
           -> encrypted private keys and credentials in flash
 ```
 
-Private key material is encrypted at rest. The optional OTP key adds
-entropy; without it, physical flash readout plus the chip serial number
-is sufficient to attempt an offline brute-force of the device root.
+OpenPGP private keys are encrypted with the DEK, and FIDO credential
+secrets are encrypted with the device key. **PIV private keys are
+currently stored unencrypted in the filesystem**; enable Secure Boot and
+Flash Encryption before production, or migrate PIV keys to the same DEK
+scheme. The optional OTP key adds entropy; without it, physical flash
+readout plus the chip serial number is sufficient to attempt an offline
+brute-force of the device root.
 
 ### PIN / DEK Flow
 
@@ -345,6 +356,18 @@ user PIN -> KDF -> DEK -> decrypt private key
 ```
 
 The DEK is derived in RAM and is never exported.
+
+### Security-Related Behavior Changes (PR #60)
+
+- `GET BULK DATA` (0xCE) is disabled.
+- PIV `SET RETRIES`/`RESET`/`PUT DATA` require the management key;
+  OpenPGP `IMPORT DATA` requires PW3.
+- `PIV RESET` only removes PIV objects (it no longer erases OpenPGP or
+  FIDO2 data).
+- Rescue PHY writes and `KEYDEV_SIGN` are compile-gated; enable them with
+  `-DPICOKEYS_ENABLE_RESCUE_DEBUG=1` for provisioning builds.
+- Concurrent CBOR requests are rejected with `CHANNEL_BUSY` while the
+  previous one is in flight.
 
 ### Secure Boot (Optional, Irreversible)
 
@@ -369,14 +392,24 @@ Espressif security advisories for your revision.
 
 - **Windows CCID + HID**: may require one reconnect after first enumeration.
 - **Brainpool**: software fallback; slower and may hit PC/SC timeouts.
-- **P-384 key generation**: software MPI path can take 10+ seconds.
+- **P-384 key generation**: software path can take 10+ seconds.
 - **Ed25519/X25519**: Ed25519 signing is constant-time under the pinned
   `-O3` flags in `components/eddsa/CMakeLists.txt`; do not remove that
   override. Target timing and WDT margin still need measurement.
-- **Yubico OTP**: not implemented; OATH TOTP/HOTP is supported.
+- **OATH / Yubico OTP**: not implemented; the OATH/OTP applet sources were removed.
+- **ECC acceleration**: none on ESP32-S3; all NIST/Brainpool/Edwards curves run in software (see Build Configuration).
 - **Debug builds**: may print secrets if debug options are enabled.
 
 ## Development
+
+### Local Checks
+
+There is no GitHub Actions CI. Run before pushing:
+
+```bash
+idf.py build
+./tools/check-eddsa-ct.sh
+```
 
 ### Commit Convention
 
@@ -400,7 +433,7 @@ Commits should be signed (`git commit -S -s`) and use English messages.
 ## Fix History
 
 [`HISTORY.md`](HISTORY.md) contains detailed root-cause analyses for PRs
-#24–#45. Recent work:
+#24–#45 and #60. Recent work:
 
 - #47: USB transport and APDU routing
 - #48: FIDO2/OATH bounds and PIN handling
@@ -415,6 +448,7 @@ Commits should be signed (`git commit -S -s`) and use English messages.
 - #57: constant-time Ed25519 signing
 - #58: X25519 PSO:DEC `0x40` prefix
 - #59: merge Ed25519/X25519 into main
+- #60: security hardening for APDU/PIV/FIDO boundaries and Phase 0 build cleanup
 
 Do not remove the CCID `0x40` compatibility bit.
 

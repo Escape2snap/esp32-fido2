@@ -9,8 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 source /path/to/esp-idf-v5.4.4/export.sh
 
 # Full build flow (first time)
-rm -rf build sdkconfig
-git clone https://github.com/intel/tinycbor.git third-party/tinycbor  # see "Dependency Notes → tinycbor"
+./tools/setup-deps.sh        # pinned tinycbor + mbedTLS fork, Ed448-off patch
 idf.py set-target esp32s3    # ⚠️ MUST set target before first build (tinyusb only supports esp32s2/s3)
 idf.py build
 idf.py -p /dev/ttyACM0 erase-flash
@@ -22,6 +21,15 @@ idf.py -p /dev/ttyACM0 flash
 
 # Clean rebuild (keeps sdkconfig — target stays esp32s3)
 idf.py fullclean && idf.py build
+```
+
+### Local Checks
+
+There is no GitHub Actions CI. Run before pushing:
+
+```bash
+idf.py build
+./tools/check-eddsa-ct.sh
 ```
 
 > **Important:** `idf.py set-target esp32s3` is required before the **first** build.
@@ -127,11 +135,12 @@ Then create `third-party/tinycbor/src/tinycbor-version.h` with:
 The tinycbor repo's own `CMakeLists.txt` must remain in place — it is
 discovered by the ESP-IDF build system as an external dependency.
 
-### mbedtls-fork (feat/ed25519 only)
+### mbedtls-fork (required on main)
 
-The `feat/ed25519` branch needs an mbedtls fork with EdDSA support
+The firmware needs an mbedtls fork with EdDSA support
 (`polhenarejos/mbedtls`, `mbedtls-3.6-eddsa` branch). `third-party/` is
-gitignored, so clone manually:
+gitignored. `tools/setup-deps.sh` pins the exact commit and applies the
+Ed448-off patch; to do it manually:
 
 ```bash
 git clone --branch mbedtls-3.6-eddsa \
@@ -191,26 +200,19 @@ Each slot has its own algorithm attribute file (EF_ALGO_PRIV1/2/3).
 On first key generation, the algorithm attribute is written automatically.
 If GPG reports `Zero prefix in S-expression`, run `key-attr` first.
 
-### feat/ed25519 Branch (Experimental)
+### Ed25519 / X25519 (main)
 
-The `feat/ed25519` branch adds Ed25519 (EdDSA) and X25519 (ECDH) support.
-It is WIP — Ed25519 signing works but GPG key generation exceeds PC/SC timeouts.
+Ed25519 (EdDSA, SIG/AUT) and X25519 (ECDH, DEC) are merged into `main`.
+GPG key generation, Ed25519 signing and X25519 `PSO:DEC` are supported on
+hardware. Ed25519 uses the dedicated `fe25519`/`sc25519` code and is
+compiled with the `-O3` override in `components/eddsa/CMakeLists.txt`;
+do not remove that override (it is required for constant-time codegen).
+Use `gpg --edit-card` → `key-attr` to select EdDSA/cv25519 before
+generating.
 
-**Key commits:**
-- `cb475c2` — Fixed Edwards point addition formula (HWCD extended coordinates)
-- `96e748c` — MPI intermediate reduction + WDT feeding in scalar multiplication loop
-- `4f2a30a` — `esp_task_wdt_add()` subscription before long loops
-- `b68bed8` — Flash-backed algorithm attribute files (FID 0x10C1-0x10C3) for PUT DATA
-- `1bfef34` — DEC slot default → Curve25519 ECDH for GPG compatibility
-- `ee2bdcf` — Import path, PSO guard, `ed25519_compute_public()`, MBEDTLS_MPI_CHK fixes
-
-**Remaining issues:**
-- Ed25519 scalar multiplication takes ~8s (generic mbedtls_mpi) → PC/SC timeouts
-- X25519 ECDH keygen (`mbedtls_ecp_keypair_calc_public`) needs verification
-- Full key generation via GPG `generate` not yet functional
-
-**Known fix needed:** Replace double-and-add with dedicated 25519 field
-arithmetic (montgomery reduction, constant-time ladder) for 100x speedup.
+**Note:** Ed25519's software scalar multiplication is still the slowest
+on-card operation; measure it with `CONFIG_DEBUG_PERF` before changing
+the implementation.
 
 ### Important: Algorithm Attribute Storage
 
@@ -232,18 +234,25 @@ key. See the `if (!file_has_data(algo_ef))` block in `cmd_keypair_gen.c`.
 | Curve25519 (X25519) | ❌ | ✅ | ❌ | — |
 | Ed25519 | ✅ | ❌ | ✅ | `ENABLE_EDDSA` + mbedTLS fork |
 
-> Brainpool curves are defined in ESP-IDF but the HW ECC accelerator
-> only supports NIST curves. Key generation and signing will fail.
+> ESP32-S3 has **no dedicated ECC accelerator** (`SOC_ECC_SUPPORTED` is
+> not defined); all ECC curves, including Brainpool, run in software via
+> mbedTLS or `components/eddsa`. The RSA/MPI accelerator speeds RSA and
+> some big-integer operations only, not ECC point multiplication.
 
 ### Flash Commit Async Issue
 
 `flash_commit()` is asynchronous — data is written in `low_flash_task()`
-which runs every 10ms. After key generation, GPG immediately sends PSO:CDS.
-If the key data hasn't been written to flash yet, the signing operation
-loads stale data and fails.
+which runs from `core0_loop` every 10ms. After key generation, GPG may
+immediately send PSO:CDS; if the key data hasn't reached flash yet, signing
+can load stale data.
 
-**Fix:** `flash_commit_sync()` in `flash.c` busy-waits calling
-`low_flash_task()` until `ready_pages == 0`.
+**Current behaviour:** `flash_commit_sync()` calls `flash_commit()` and
+yields (`vTaskDelay`) until core0 drains the queue. It must **not** call
+`low_flash_task()` from core1: that function uses
+`multicore_lockout_start_timeout_us()`, which is a `vTaskSuspend(hcore1)`
+on ESP and would self-suspend the CBOR/APDU worker. `button_wait()` also
+continues draining flash and feeding the Task WDT while waiting for user
+presence.
 
 ---
 

@@ -1,5 +1,49 @@
 # Fix History
 
+### PR #60 — Security Hardening and Phase 0 Build Cleanup
+
+**Scope:** 30 signed commits; see README "Fix History" and PR #60 for the
+full list. This PR was produced by the 2026-11-18 code review.
+
+**Transport / APDU**
+- Reassemble chained APDUs in a private buffer instead of the USB RX
+  buffer; track response capacity and guard C0 continuation offsets.
+- Bound CCID RX, reset ring pointers on USB reset, consume queued messages.
+- Disable unauthenticated `GET BULK DATA` (0xCE).
+- Snapshot CBOR requests and reject concurrent ones with `CHANNEL_BUSY`.
+
+**OpenPGP / PIV**
+- Require the PIV management key for `SET RETRIES`/`RESET`/`PUT DATA`
+  and PW3 for `IMPORT DATA`.
+- Scope PIV RESET to PIV objects; fix SELECT NULL dereference.
+- Bound the ASN.1 TLV walker and validate OpenPGP algorithm attributes.
+
+**FIDO2 / CTAP2**
+- Validate vendor MSE/UNLOCK/restore parameters; backup restore now
+  requires a successful UNLOCK.
+- Fix `cred_id` capacity, credProtect double free, NULL rp-id-hash
+  comparison, resident credential truncation/OOM and U2F keyHandle bounds.
+- Clear session/vendor state on reset/unload, reset largeBlob state.
+- Validate required makeCredential/getAssertion fields and fix
+  minPinLength force-change handling.
+
+**Storage / tasks / build**
+- Bound the flash file-chain scan; accept unaligned records (regression
+  fix: the first scan rewrite skipped unaligned key records and hid keys
+  after reboot).
+- Drain flash and feed the Task WDT while waiting for user presence.
+- Build with -O2, 8192-byte main stack and the USB-Serial-JTAG module
+  disabled; remove 2,553 lines of uncompiled dead sources.
+- Pin third-party commits, add the Ed448-off patch, dependencies.lock and
+  local CT gate; no GitHub Actions workflow is used.
+
+**Regressions fixed inside the PR**
+- `FILE_DATA_FUNC` EFs store a function pointer, not a flash offset;
+  reading their size caused a boot-time crash on GET DATA.
+- Unaligned flash records must be accepted by the scan (see above).
+
+---
+
 ### PR #45 — RSA PSO:DEC Algorithm Reference Byte
 `cmd_pso.c:125-147` — Skip algorithm reference byte (`apdu.data + 1`)
 
