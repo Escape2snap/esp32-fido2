@@ -385,6 +385,9 @@ int cbor_cred_mgmt(const uint8_t *data, size_t len) {
         if (credentialId.id.present == false) {
             CBOR_ERROR(CTAP2_ERR_MISSING_PARAMETER);
         }
+        if (credentialId.id.len != CRED_RESIDENT_LEN) {
+            CBOR_ERROR(CTAP2_ERR_INVALID_CBOR);
+        }
         *(raw_subpara - 1) = 0x06;
         if (verify((uint8_t)pinUvAuthProtocol, paut.data, raw_subpara - 1, (uint16_t)(raw_subpara_len + 1), pinUvAuthParam.data) != CborNoError) {
             CBOR_ERROR(CTAP2_ERR_PIN_AUTH_INVALID);
@@ -394,7 +397,8 @@ int cbor_cred_mgmt(const uint8_t *data, size_t len) {
         }
         for (int i = 0; i < MAX_RESIDENT_CREDENTIALS; i++) {
             file_t *ef = file_search((uint16_t)(EF_CRED + i));
-            if (file_has_data(ef) && memcmp(file_get_data(ef) + 32, credentialId.id.data, CRED_RESIDENT_LEN) == 0) {
+            if (file_has_data(ef) && file_get_size(ef) >= 32 + CRED_RESIDENT_LEN &&
+                memcmp(file_get_data(ef) + 32, credentialId.id.data, CRED_RESIDENT_LEN) == 0) {
                 uint8_t *rp_id_hash = file_get_data(ef);
                 if (file_delete(ef) != 0) {
                     CBOR_ERROR(CTAP2_ERR_NOT_ALLOWED);
@@ -426,6 +430,9 @@ int cbor_cred_mgmt(const uint8_t *data, size_t len) {
         if (credentialId.id.present == false || user.id.present == false) {
             CBOR_ERROR(CTAP2_ERR_MISSING_PARAMETER);
         }
+        if (credentialId.id.len != CRED_RESIDENT_LEN) {
+            CBOR_ERROR(CTAP2_ERR_INVALID_CBOR);
+        }
         *(raw_subpara - 1) = 0x07;
         if (verify((uint8_t)pinUvAuthProtocol, paut.data, raw_subpara - 1, (uint16_t)(raw_subpara_len + 1), pinUvAuthParam.data) != CborNoError) {
             CBOR_ERROR(CTAP2_ERR_PIN_AUTH_INVALID);
@@ -435,7 +442,8 @@ int cbor_cred_mgmt(const uint8_t *data, size_t len) {
         }
         for (int i = 0; i < MAX_RESIDENT_CREDENTIALS; i++) {
             file_t *ef = file_search((uint16_t)(EF_CRED + i));
-            if (file_has_data(ef) && memcmp(file_get_data(ef) + 32, credentialId.id.data, CRED_RESIDENT_LEN) == 0) {
+            if (file_has_data(ef) && file_get_size(ef) >= 32 + CRED_RESIDENT_LEN &&
+                memcmp(file_get_data(ef) + 32, credentialId.id.data, CRED_RESIDENT_LEN) == 0) {
                 Credential cred = { 0 };
                 uint8_t *rp_id_hash = file_get_data(ef);
                 if (credential_load_resident(ef, rp_id_hash, &cred) != 0) {
