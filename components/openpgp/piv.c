@@ -1219,6 +1219,13 @@ static int cmd_set_retries(void) {
     return SW_OK();
 }
 
+static void piv_delete_fid(uint16_t fid) {
+    file_t *ef = file_search(fid);
+    if (ef) {
+        file_delete(ef);
+    }
+}
+
 static int cmd_reset(void) {
     if (!has_mgm) {
         return SW_SECURITY_STATUS_NOT_SATISFIED();
@@ -1235,7 +1242,26 @@ static int cmd_reset(void) {
     if (retPIN != 0 || retPUK != 0) {
         return SW_INCORRECT_PARAMS();
     }
-    file_initialize_flash(true);
+    /* PIV RESET must only remove PIV objects.  It used to call
+       file_initialize_flash(true), which erased the shared pool and with it
+       all OpenPGP keys and FIDO2 credentials. */
+    for (uint16_t fid = 0x0082; fid <= 0x0096; fid++) {
+        if (fid == EF_SIG_COUNT) { /* 0x0093 belongs to OpenPGP */
+            continue;
+        }
+        piv_delete_fid(fid);
+    }
+    for (uint16_t fid = 0xc101; fid <= 0xc123; fid++) {
+        piv_delete_fid(fid);
+    }
+    for (uint16_t fid = 0xff00; fid <= 0xff15; fid++) {
+        piv_delete_fid(fid);
+    }
+    piv_delete_fid(EF_PIV_PIN);
+    piv_delete_fid(EF_PIV_PUK);
+    piv_delete_fid(EF_PIV_DISCOVERY);
+    piv_delete_fid(EF_PIV_BITGT);
+    piv_delete_fid(EF_PIV_KEY_ATTESTATION);
     flash_commit();
     init_piv();
     return SW_OK();
