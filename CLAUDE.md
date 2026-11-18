@@ -28,8 +28,7 @@ idf.py fullclean && idf.py build
 There is no GitHub Actions CI. Run before pushing:
 
 ```bash
-idf.py build
-./tools/check-eddsa-ct.sh
+./tools/preflight.sh
 ```
 
 > **Important:** `idf.py set-target esp32s3` is required before the **first** build.

@@ -407,8 +407,7 @@ Espressif security advisories for your revision.
 There is no GitHub Actions CI. Run before pushing:
 
 ```bash
-idf.py build
-./tools/check-eddsa-ct.sh
+./tools/preflight.sh
 ```
 
 ### Commit Convention
