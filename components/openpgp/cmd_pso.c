@@ -62,7 +62,10 @@ int cmd_pso(void) {
     if (algo_ef && algo_ef->data) {
         algo = file_get_data(algo_ef);
     }
-    if (apdu.nc > 0 && apdu.data[0] == 0x2) { //AES PSO?
+    /* RSA PSO:DEC input is 0x02 || ciphertext (OpenPGP Card 3.4 §7.2.10);
+       for RSA-2048 that is 257 bytes, which also looks like an AES block
+       multiple.  Never route an RSA slot through the AES fallback. */
+    if (algo[0] != ALGO_RSA && apdu.nc > 0 && apdu.data[0] == 0x2) { //AES PSO?
         if (((apdu.nc - 1) % 16 == 0 && P1(apdu) == 0x80 && P2(apdu) == 0x86) ||
             (apdu.nc % 16 == 0 && P1(apdu) == 0x86 && P2(apdu) == 0x80)) {
             pk_fid = EF_AES_KEY;
@@ -86,7 +89,11 @@ int cmd_pso(void) {
             return SW_EXEC_ERROR();
         }
         if (P1(apdu) == 0x80 && P2(apdu) == 0x86) { //decipher
-            r = aes_decrypt(aes_key, NULL, key_size, PICOKEYS_AES_MODE_CBC, apdu.data + 1, apdu.nc - 1);
+            if (apdu.rdata_cap != 0 && (uint32_t)apdu.nc + 1 > apdu.rdata_cap) {
+                memset(aes_key, 0, sizeof(aes_key));
+                return SW_FILE_FULL();
+            }
+            r = aes_decrypt(aes_key, NULL, (uint16_t)(key_size * 8), PICOKEYS_AES_MODE_CBC, apdu.data + 1, apdu.nc - 1);
             memset(aes_key, 0, sizeof(aes_key));
             if (r != PICOKEYS_OK) {
                 return SW_EXEC_ERROR();
@@ -95,7 +102,11 @@ int cmd_pso(void) {
             res_APDU_size = apdu.nc - 1;
         }
         else if (P1(apdu) == 0x86 && P2(apdu) == 0x80) { //encipher
-            r = aes_encrypt(aes_key, NULL, key_size, PICOKEYS_AES_MODE_CBC, apdu.data, apdu.nc);
+            if (apdu.rdata_cap != 0 && (uint32_t)apdu.nc + 1 > apdu.rdata_cap) {
+                memset(aes_key, 0, sizeof(aes_key));
+                return SW_FILE_FULL();
+            }
+            r = aes_encrypt(aes_key, NULL, (uint16_t)(key_size * 8), PICOKEYS_AES_MODE_CBC, apdu.data, apdu.nc);
             memset(aes_key, 0, sizeof(aes_key));
             if (r != PICOKEYS_OK) {
                 return SW_EXEC_ERROR();
