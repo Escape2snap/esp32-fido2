@@ -77,6 +77,9 @@ int cmd_select(void) {
             }
         }
     }
+    if (!pe) {
+        return SW_REFERENCE_NOT_FOUND();
+    }
     if ((p2 & 0xfc) == 0x00 || (p2 & 0xfc) == 0x04) {
         if ((p2 & 0xfc) == 0x04) {
             file_process_fci(pe, 0);

@@ -379,6 +379,9 @@ static int cmd_piv_verify(void) {
 }
 
 static int cmd_piv_get_data(void) {
+    if (apdu.nc < 2) {
+        return SW_WRONG_LENGTH();
+    }
     if (P1(apdu) != 0x3F || P2(apdu) != 0xFF) {
         return SW_INCORRECT_P1P2();
     }
@@ -405,11 +408,17 @@ static int cmd_piv_get_data(void) {
         else {
             if (ef->data) {
                 data_len = file_get_size(ef);
+                if (apdu.rdata_cap != 0 && (uint32_t)data_len + 8 > apdu.rdata_cap) {
+                    return SW_FILE_FULL();
+                }
                 memcpy(res_APDU + res_APDU_size, file_get_data(ef), data_len);
             }
         }
         if (data_len == 0) {
             return SW_FILE_NOT_FOUND();
+        }
+        if (apdu.rdata_cap != 0 && (uint32_t)data_len + 8 > apdu.rdata_cap) {
+            return SW_FILE_FULL();
         }
         if (data_len > 255) {
             memmove(res_APDU + res_APDU_size + 2, res_APDU + res_APDU_size, data_len);
@@ -944,6 +953,12 @@ static int cmd_asym_keygen(void) {
 }
 
 static int cmd_piv_put_data(void) {
+    if (!has_mgm) {
+        return SW_SECURITY_STATUS_NOT_SATISFIED();
+    }
+    if (apdu.nc < 1) {
+        return SW_WRONG_LENGTH();
+    }
     if (P1(apdu) != 0x3F || P2(apdu) != 0xFF) {
         return SW_INCORRECT_P1P2();
     }
@@ -1168,6 +1183,9 @@ static int cmd_piv_reset_retry(void) {
 }
 
 static int cmd_set_retries(void) {
+    if (!has_mgm) {
+        return SW_SECURITY_STATUS_NOT_SATISFIED();
+    }
     file_t *ef = file_search_by_fid(EF_PW_RETRIES, NULL, SPECIFY_ANY);
     if (!ef) {
         return SW_MEMORY_FAILURE();
@@ -1202,6 +1220,9 @@ static int cmd_set_retries(void) {
 }
 
 static int cmd_reset(void) {
+    if (!has_mgm) {
+        return SW_SECURITY_STATUS_NOT_SATISFIED();
+    }
     if (P1(apdu) != 0x0 || P2(apdu) != 0x0) {
         return SW_INCORRECT_P1P2();
     }

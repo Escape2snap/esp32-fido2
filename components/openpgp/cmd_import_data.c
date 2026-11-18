@@ -79,6 +79,11 @@ int cmd_import_data(void) {
     if (!(ef = file_search_by_fid(fid, NULL, SPECIFY_EF))) {
         return SW_REFERENCE_NOT_FOUND();
     }
+    /* Importing a private key is a key-management operation: require PW3,
+       like GENERATE and PUT DATA, not merely any authenticated PIN. */
+    if (!has_pw3) {
+        return SW_SECURITY_STATUS_NOT_SATISFIED();
+    }
     if (!file_authenticate_action(ef, ACL_OP_UPDATE_ERASE)) {
         return SW_SECURITY_STATUS_NOT_SATISFIED();
     }
