@@ -34,6 +34,11 @@ extern bool has_keydev_dec;
 
 mse_t mse = { .init = false };
 
+void fido_vendor_reset_state(void) {
+    mbedtls_platform_zeroize(&mse, sizeof(mse));
+    has_keydev_dec = false;
+}
+
 int mse_decrypt_ct(uint8_t *data, size_t len) {
     /* Callers pass a backup ciphertext: 12-byte IV + 16-byte tag + data. */
     if (data == NULL || len < 32 || len > 1024) {

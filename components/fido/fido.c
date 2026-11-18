@@ -100,7 +100,9 @@ INITIALIZER ( fido_ctor ) {
 static int fido_unload(void) {
     mbedtls_platform_zeroize(keydev_dec, sizeof(keydev_dec));
     mbedtls_platform_zeroize(session_pin, sizeof(session_pin));
-    has_keydev_dec = false;
+    mbedtls_platform_zeroize(&paut, sizeof(paut));
+    mbedtls_platform_zeroize(&ppaut, sizeof(ppaut));
+    fido_vendor_reset_state();
     return PICOKEYS_OK;
 }
 
