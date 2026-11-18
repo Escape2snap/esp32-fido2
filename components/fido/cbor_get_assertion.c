@@ -206,7 +206,9 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
     }
     CBOR_PARSE_MAP_END(map, 1);
 
-    if (rpId.present == false || clientDataHash.present == false) {
+    if (rpId.present == false || rpId.data == NULL || rpId.len == 0 ||
+        clientDataHash.present == false || clientDataHash.data == NULL ||
+        clientDataHash.len != 32) {
         CBOR_ERROR(CTAP2_ERR_MISSING_PARAMETER);
     }
     rp_id = rpId.data;
