@@ -53,9 +53,13 @@ int cmd_get_data(void) {
             is_gpg = true;
         }
         uint16_t fids[] = { 1, fid };
-        /* parse_do() copies the EF payload straight into res_APDU; make sure
-           the static payload plus TLV overhead can fit before calling it. */
-        if (apdu.rdata_cap != 0 && (uint32_t)file_get_size(ef) + 16 > apdu.rdata_cap) {
+        /* parse_do() copies the static EF payload straight into res_APDU; make
+           sure it plus TLV overhead can fit before calling it.  Files with
+           FILE_DATA_FUNC store a function pointer in ef->data, not a flash
+           offset, so file_get_size() must not be used for them. */
+        if ((ef->type & FILE_DATA_FUNC) != FILE_DATA_FUNC &&
+            apdu.rdata_cap != 0 &&
+            (uint32_t)file_get_size(ef) + 16 > apdu.rdata_cap) {
             return SW_FILE_FULL();
         }
         uint16_t data_len = parse_do(fids, 1);
