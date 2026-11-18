@@ -30,6 +30,16 @@ uint8_t cred_counter = 1;
 uint8_t cred_total = 0;
 CborByteString rpIdHashx = { 0 };
 
+static bool paut_rp_hash_matches(const CborByteString *rpIdHash) {
+    if (paut.has_rp_id == false) {
+        return true;
+    }
+    if (rpIdHash == NULL || rpIdHash->data == NULL || rpIdHash->len != 32) {
+        return false;
+    }
+    return memcmp(paut.rp_id_hash, rpIdHash->data, 32) == 0;
+}
+
 int cbor_cred_mgmt(const uint8_t *data, size_t len) {
     CborParser parser;
     CborValue map;
@@ -235,7 +245,7 @@ int cbor_cred_mgmt(const uint8_t *data, size_t len) {
                 }
                 if (is_preview == false &&
                     (!(paut.permissions & CTAP_PERMISSION_CM) ||
-                    (paut.has_rp_id == true && memcmp(paut.rp_id_hash, rpIdHash.data, 32) != 0))) {
+                    (!paut_rp_hash_matches(&rpIdHash)))) {
                     CBOR_ERROR(CTAP2_ERR_PIN_AUTH_INVALID);
                 }
             }
@@ -375,24 +385,32 @@ int cbor_cred_mgmt(const uint8_t *data, size_t len) {
         if (credentialId.id.present == false) {
             CBOR_ERROR(CTAP2_ERR_MISSING_PARAMETER);
         }
+        if (credentialId.id.len != CRED_RESIDENT_LEN) {
+            CBOR_ERROR(CTAP2_ERR_INVALID_CBOR);
+        }
         *(raw_subpara - 1) = 0x06;
         if (verify((uint8_t)pinUvAuthProtocol, paut.data, raw_subpara - 1, (uint16_t)(raw_subpara_len + 1), pinUvAuthParam.data) != CborNoError) {
             CBOR_ERROR(CTAP2_ERR_PIN_AUTH_INVALID);
         }
-        if (is_preview == false && (!(paut.permissions & CTAP_PERMISSION_CM) || (paut.has_rp_id == true && memcmp(paut.rp_id_hash, rpIdHash.data, 32) != 0))) {
+        if (is_preview == false && (!(paut.permissions & CTAP_PERMISSION_CM) || (!paut_rp_hash_matches(&rpIdHash)))) {
             CBOR_ERROR(CTAP2_ERR_PIN_AUTH_INVALID);
         }
         for (int i = 0; i < MAX_RESIDENT_CREDENTIALS; i++) {
             file_t *ef = file_search((uint16_t)(EF_CRED + i));
-            if (file_has_data(ef) && memcmp(file_get_data(ef) + 32, credentialId.id.data, CRED_RESIDENT_LEN) == 0) {
+            if (file_has_data(ef) && file_get_size(ef) >= 32 + CRED_RESIDENT_LEN &&
+                memcmp(file_get_data(ef) + 32, credentialId.id.data, CRED_RESIDENT_LEN) == 0) {
                 uint8_t *rp_id_hash = file_get_data(ef);
                 if (file_delete(ef) != 0) {
                     CBOR_ERROR(CTAP2_ERR_NOT_ALLOWED);
                 }
                 for (int j = 0; j < MAX_RESIDENT_CREDENTIALS; j++) {
                     file_t *rp_ef = file_search((uint16_t)(EF_RP + j));
-                    if (file_has_data(rp_ef) && memcmp(file_get_data(rp_ef) + 1, rp_id_hash, 32) == 0) {
+                    if (file_has_data(rp_ef) && file_get_size(rp_ef) >= 1 + 32 &&
+                        memcmp(file_get_data(rp_ef) + 1, rp_id_hash, 32) == 0) {
                         uint8_t *rp_data = (uint8_t *) calloc(1, file_get_size(rp_ef));
+                        if (rp_data == NULL) {
+                            CBOR_ERROR(CTAP2_ERR_PROCESSING);
+                        }
                         memcpy(rp_data, file_get_data(rp_ef), file_get_size(rp_ef));
                         rp_data[0] -= 1;
                         if (rp_data[0] == 0) {
@@ -416,16 +434,20 @@ int cbor_cred_mgmt(const uint8_t *data, size_t len) {
         if (credentialId.id.present == false || user.id.present == false) {
             CBOR_ERROR(CTAP2_ERR_MISSING_PARAMETER);
         }
+        if (credentialId.id.len != CRED_RESIDENT_LEN) {
+            CBOR_ERROR(CTAP2_ERR_INVALID_CBOR);
+        }
         *(raw_subpara - 1) = 0x07;
         if (verify((uint8_t)pinUvAuthProtocol, paut.data, raw_subpara - 1, (uint16_t)(raw_subpara_len + 1), pinUvAuthParam.data) != CborNoError) {
             CBOR_ERROR(CTAP2_ERR_PIN_AUTH_INVALID);
         }
-        if (is_preview == false && (!(paut.permissions & CTAP_PERMISSION_CM) || (paut.has_rp_id == true && memcmp(paut.rp_id_hash, rpIdHash.data, 32) != 0))) {
+        if (is_preview == false && (!(paut.permissions & CTAP_PERMISSION_CM) || (!paut_rp_hash_matches(&rpIdHash)))) {
             CBOR_ERROR(CTAP2_ERR_PIN_AUTH_INVALID);
         }
         for (int i = 0; i < MAX_RESIDENT_CREDENTIALS; i++) {
             file_t *ef = file_search((uint16_t)(EF_CRED + i));
-            if (file_has_data(ef) && memcmp(file_get_data(ef) + 32, credentialId.id.data, CRED_RESIDENT_LEN) == 0) {
+            if (file_has_data(ef) && file_get_size(ef) >= 32 + CRED_RESIDENT_LEN &&
+                memcmp(file_get_data(ef) + 32, credentialId.id.data, CRED_RESIDENT_LEN) == 0) {
                 Credential cred = { 0 };
                 uint8_t *rp_id_hash = file_get_data(ef);
                 if (credential_load_resident(ef, rp_id_hash, &cred) != 0) {

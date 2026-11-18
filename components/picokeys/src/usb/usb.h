@@ -121,6 +121,9 @@ typedef struct {
     uint16_t w_ptr;
 }) usb_buffer_t;
 
+_Static_assert(sizeof(usb_buffer_t) == USB_BUFFER_SIZE + sizeof(uint16_t) * 2,
+               "usb_buffer_t layout is assumed by the APDU/chain bounds checks");
+
 typedef enum {
     WRITE_UNKNOWN = 0,
     WRITE_PENDING,

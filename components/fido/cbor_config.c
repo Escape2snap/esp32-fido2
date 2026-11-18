@@ -170,19 +170,24 @@ int cbor_config(const uint8_t *data, size_t len) {
                 CBOR_ERROR(CTAP1_ERR_INVALID_PARAMETER);
             }
 
-            uint8_t key_dev_enc[12 + 32 + 16];
+            size_t keydev_len = file_get_size(ef_keydev);
+            if (keydev_len == 0 || keydev_len > 61) {
+                CBOR_ERROR(CTAP1_ERR_OTHER);
+            }
+            /* 12-byte IV + up to 61-byte keydev + 16-byte tag. */
+            uint8_t key_dev_enc[12 + 61 + 16];
             random_fill_buffer(key_dev_enc, 12);
             mbedtls_chachapoly_init(&chatx);
             mbedtls_chachapoly_setkey(&chatx, vendorParamByteString.data);
-            ret = mbedtls_chachapoly_encrypt_and_tag(&chatx, file_get_size(ef_keydev), key_dev_enc, NULL, 0, file_get_data(ef_keydev), key_dev_enc + 12, key_dev_enc + 12 + file_get_size(ef_keydev));
+            ret = mbedtls_chachapoly_encrypt_and_tag(&chatx, keydev_len, key_dev_enc, NULL, 0, file_get_data(ef_keydev), key_dev_enc + 12, key_dev_enc + 12 + keydev_len);
             mbedtls_chachapoly_free(&chatx);
             if (ret != 0) {
                 CBOR_ERROR(CTAP1_ERR_INVALID_PARAMETER);
             }
 
-            file_put_data(ef_keydev_enc, key_dev_enc, sizeof(key_dev_enc));
+            file_put_data(ef_keydev_enc, key_dev_enc, (uint16_t)(12 + keydev_len + 16));
             mbedtls_platform_zeroize(key_dev_enc, sizeof(key_dev_enc));
-            file_put_data(ef_keydev, key_dev_enc, file_get_size(ef_keydev)); // Overwrite ef with 0
+            file_put_data(ef_keydev, key_dev_enc, (uint16_t)keydev_len); // Overwrite ef with 0
             file_put_data(ef_keydev, NULL, 0); // Set ef to 0 bytes
             flash_commit();
         }
@@ -258,11 +263,16 @@ int cbor_config(const uint8_t *data, size_t len) {
         if (file_has_data(ef_pin) && file_get_data(ef_pin)[1] < newMinPinLength) {
             forceChangePin = ptrue;
         }
-        if (forceChangePin) {
+        /* forceChangePin is a tri-state pointer (_btrue/_bfalse/NULL); a
+           non-NULL pointer alone does not mean "force change". */
+        if (forceChangePin == ptrue) {
             resetPersistentPinUvAuthToken();
             resetPinUvAuthToken();
         }
         uint8_t *dataf = (uint8_t *) calloc(1, 2 + minPinLengthRPIDs_len * 32);
+        if (dataf == NULL) {
+            CBOR_ERROR(CTAP2_ERR_PROCESSING);
+        }
         dataf[0] = (uint8_t)newMinPinLength;
         dataf[1] = forceChangePin == ptrue ? 1 : 0;
         for (size_t m = 0; m < minPinLengthRPIDs_len; m++) {

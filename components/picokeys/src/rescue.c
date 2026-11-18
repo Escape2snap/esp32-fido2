@@ -38,6 +38,13 @@ extern char __flash_binary_start;
 extern char __flash_binary_end;
 #endif
 
+/* Factory/debug-only rescue commands (raw PHY write and device-key signing).
+   They are intentionally disabled in production builds; enable explicitly
+   for provisioning firmware with -DPICOKEYS_ENABLE_RESCUE_DEBUG=1. */
+#ifndef PICOKEYS_ENABLE_RESCUE_DEBUG
+#define PICOKEYS_ENABLE_RESCUE_DEBUG 0
+#endif
+
 static int rescue_process_apdu(void);
 static int rescue_unload(void);
 
@@ -134,6 +141,9 @@ static int load_internal_keydev(mbedtls_ecp_keypair *ecp, mbedtls_ecp_group_id e
 }
 
 static int cmd_keydev_sign(void) {
+    if (!PICOKEYS_ENABLE_RESCUE_DEBUG) {
+        return SW_INS_NOT_SUPPORTED();
+    }
     uint8_t p1 = P1(apdu);
     if (p1 == 0x01) {
         if (apdu.nc != 32) {
@@ -248,6 +258,9 @@ static int cmd_write(void) {
     uint8_t p1 = P1(apdu), p2 = P2(apdu);
 
     if (p1 == 0x1) { // PHY
+        if (!PICOKEYS_ENABLE_RESCUE_DEBUG) {
+            return SW_INS_NOT_SUPPORTED();
+        }
 #ifndef ENABLE_EMULATION
         int ret = phy_unserialize_data(apdu.data, (uint16_t)apdu.nc, &phy_data);
         if (ret == PICOKEYS_OK) {

@@ -154,6 +154,9 @@ extern uint32_t user_present_time_limit;
 
 extern pinUvAuthToken_t paut;
 extern persistentPinUvAuthToken_t ppaut;
+extern bool has_keydev_dec;
+extern void fido_vendor_reset_state(void);
+extern void cbor_large_blobs_reset(void);
 
 extern int verify(uint8_t protocol, const uint8_t *key, const uint8_t *data, uint16_t len, uint8_t *sign);
 

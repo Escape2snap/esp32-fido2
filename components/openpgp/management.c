@@ -24,6 +24,8 @@
 #include "asn1.h"
 #include "management.h"
 
+extern bool has_pw3;
+
 bool is_gpg = true;
 
 static int man_process_apdu(void);
@@ -126,6 +128,15 @@ static int cmd_read_config(void) {
 }
 
 static int cmd_write_config(void) {
+    /* Device configuration controls USB/applet capabilities.  Writing it is
+       a management operation and must not be possible from an unauthenticated
+       host. */
+    if (!has_pw3) {
+        return SW_SECURITY_STATUS_NOT_SATISFIED();
+    }
+    if (apdu.nc < 1) {
+        return SW_WRONG_LENGTH();
+    }
     if (apdu.data[0] != apdu.nc - 1) {
         return SW_WRONG_DATA();
     }

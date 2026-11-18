@@ -85,6 +85,11 @@ int cbor_reset(void) {
             file_delete(ef);
         }
     }
+    mbedtls_platform_zeroize(&paut, sizeof(paut));
+    mbedtls_platform_zeroize(&ppaut, sizeof(ppaut));
+    mbedtls_platform_zeroize(session_pin, sizeof(session_pin));
+    fido_vendor_reset_state();
+    cbor_large_blobs_reset();
     fido_initialized = false;
     init_fido();
 #ifdef DEFAULT_MCUV_NOT_REQUIRED

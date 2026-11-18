@@ -34,9 +34,14 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next);
 
 const uint8_t aaguid[16] = { 0x89, 0xFB, 0x94, 0xB7, 0x06, 0xC9, 0x36, 0x73, 0x9B, 0x7E, 0x30, 0x52, 0x6D, 0x96, 0x81, 0x45 }; // First 16 bytes of SHA256("Pico FIDO2")
 
+/* Snapshot of the CBOR request.  Without this the worker would parse the
+   USB RX buffer while the host is allowed to overwrite it with the next
+   packet (TOCTOU).  One request is accepted at a time. */
+static uint8_t cbor_req[CTAP_MAX_CBOR_PAYLOAD + 1];
 static const uint8_t *volatile cbor_data = NULL;
 static volatile size_t cbor_len = 0;
 static volatile uint8_t cbor_cmd = 0;
+static volatile bool cbor_busy = false;
 
 int cbor_parse(uint8_t cmd, const uint8_t *data, size_t len) {
     if (len == 0 && cmd == CTAPHID_CBOR) {
@@ -106,6 +111,7 @@ void *cbor_thread(void *arg) {
         queue_add_blocking(&card_to_usb_q, &flag);
 
         if (m == EV_EXIT) {
+            cbor_busy = false;
             break;
         }
         const uint8_t *data = (const uint8_t *)cbor_data;
@@ -139,6 +145,7 @@ void *cbor_thread(void *arg) {
 
         finished_data_size = res_APDU_size + 1;
 
+        cbor_busy = false;
         flag = EV_EXEC_FINISHED;
         queue_add_blocking(&card_to_usb_q, &flag);
     }
@@ -146,11 +153,20 @@ void *cbor_thread(void *arg) {
 }
 
 int cbor_process(uint8_t last_cmd, const uint8_t *data, size_t len) {
-    cbor_data = data;
+    if (len > sizeof(cbor_req)) {
+        return -CTAP1_ERR_INVALID_LEN;
+    }
+    if (cbor_busy) {
+        return -CTAP1_ERR_CHANNEL_BUSY;
+    }
+    cbor_busy = true;
+    memcpy(cbor_req, data, len);
+    cbor_data = cbor_req;
     cbor_len = len;
     cbor_cmd = last_cmd;
     ctap_resp->init.data[0] = 0;
     res_APDU = ctap_resp->init.data + 1;
+    apdu.rdata_cap = USB_BUFFER_SIZE >= 8 ? (uint16_t)(USB_BUFFER_SIZE - 8) : 0;
     res_APDU_size = 0;
     return 2; // CBOR processing
 }

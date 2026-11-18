@@ -27,14 +27,16 @@
 #include "compat/queue.h"
 #endif
 
-static bool boot_rng_initialized = false;
-
 static void hwrng_start(void) {
 #if defined(ENABLE_EMULATION)
     srand(time(0));
 #elif defined(ESP_PLATFORM)
+    /* Keep the SAR-ADC entropy source enabled for the whole lifetime: this
+       firmware never initialises Wi-Fi/Bluetooth or the ADC, so there is no
+       conflicting user, and disabling it after the first sample would leave
+       esp_fill_random() without a guaranteed entropy source for later key
+       generation.  See ESP-IDF "Random Number Generation". */
     bootloader_random_enable();
-    boot_rng_initialized = false;
 #endif
 }
 
@@ -57,10 +59,6 @@ static int hwrng_mix_process(void) {
     word = get_rand_64();
 #elif defined(ESP_PLATFORM)
     esp_fill_random((uint8_t *)&word, sizeof(word));
-    if (!boot_rng_initialized) {
-        bootloader_random_disable();
-        boot_rng_initialized = true;
-    }
 #else
     word = rand();
     word <<= 32;

@@ -46,6 +46,10 @@ int parse_do(uint16_t *fids, int mode) {
             else {
                 data_len = file_get_size(ef);
                 if (mode == 1) {
+                    if (apdu.rdata_cap != 0 &&
+                        (uint32_t)res_APDU_size + data_len + 16 > apdu.rdata_cap) {
+                        return -1;
+                    }
                     if (fids[0] > 1 && res_APDU_size > 0) {
                         if (fids[i + 1] < 0x0100) {
                             res_APDU[res_APDU_size++] = fids[i + 1] & 0xff;

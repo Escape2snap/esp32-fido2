@@ -41,6 +41,9 @@ uint16_t asn1_len(asn1_ctx_t *ctx) {
 }
 
 uint32_t asn1_get_uint(asn1_ctx_t *ctx) {
+    if (ctx == NULL || ctx->data == NULL || ctx->len == 0) {
+        return 0;
+    }
     uint32_t d = ctx->data[0];
     for (uint16_t lt = 1; lt < MIN(ctx->len, sizeof(uint32_t)); lt++) {
         d <<= 8;
@@ -83,29 +86,42 @@ int walk_tlv(const asn1_ctx_t *ctxi,
              uint16_t *tag,
              uint16_t *tag_len,
              uint8_t **data) {
-    if (!p) {
+    if (ctxi == NULL || ctxi->data == NULL || p == NULL) {
         return 0;
     }
-    if (!*p) {
-        *p = (uint8_t *) ctxi->data;
-    }
-    if (*p - ctxi->data >= ctxi->len) {
+    const uint8_t *base = ctxi->data;
+    const uint8_t *end = base + ctxi->len;
+    const uint8_t *cur = (*p != NULL) ? *p : base;
+    if (cur < base || cur >= end) {
         return 0;
     }
-    uint16_t tg = 0x0;
-    uint16_t tgl = 0;
-    tg = *(*p)++;
+    uint16_t tg = *cur++;
     if ((tg & 0x1f) == 0x1f) {
-        tg <<= 8;
-        tg |= *(*p)++;
+        if (cur >= end) {
+            return 0;
+        }
+        tg = (uint16_t)((tg << 8) | *cur++);
     }
-    tgl = *(*p)++;
+    if (cur >= end) {
+        return 0;
+    }
+    uint16_t tgl = *cur++;
     if (tgl == 0x82) {
-        tgl = *(*p)++ << 8;
-        tgl |= *(*p)++;
+        if ((size_t)(end - cur) < 2) {
+            return 0;
+        }
+        tgl = (uint16_t)((cur[0] << 8) | cur[1]);
+        cur += 2;
     }
     else if (tgl == 0x81) {
-        tgl = *(*p)++;
+        tgl = *cur++;
+    }
+    else if (tgl & 0x80) {
+        /* 0x80 (indefinite) and 0x83/0x84 are not supported. */
+        return 0;
+    }
+    if ((size_t)(end - cur) < tgl) {
+        return 0;
     }
     if (tag) {
         *tag = tg;
@@ -114,9 +130,9 @@ int walk_tlv(const asn1_ctx_t *ctxi,
         *tag_len = tgl;
     }
     if (data) {
-        *data = *p;
+        *data = (uint8_t *) cur;
     }
-    *p = *p + tgl;
+    *p = (uint8_t *)(cur + tgl);
     return 1;
 }
 

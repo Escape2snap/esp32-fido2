@@ -257,8 +257,21 @@ static void scan_region(bool persistent) {
         last_base = endp;
         num_files = 0;
     }
-    for (uintptr_t base = flash_read_uintptr(endp); base >= startp; base = flash_read_uintptr(base)) {
-        if (base == 0x0) { //all is empty
+    /* Walk the record chain defensively: a partially written record or a
+       corrupt next pointer used to send flash_read() to an arbitrary address
+       (and could brick the boot with a load fault).  Only accept pointers
+       inside the pool, aligned, and strictly bounded in count. */
+    uintptr_t base = flash_read_uintptr(endp);
+    uint32_t guard = 0;
+    while (base >= startp && base != 0) {
+        /* A record is at least 12 bytes (next + prev + fid + len) and may
+           start at any byte offset: the record size is data_len+12, and
+           key/certificate payloads are not multiples of four.  Do not
+           require alignment here or valid records get skipped after reboot. */
+        if (base > endp - 12 || ++guard > 65536) {
+            if (!persistent && base < last_base) {
+                last_base = base;
+            }
             break;
         }
 
@@ -274,12 +287,20 @@ static void scan_region(bool persistent) {
         if (!persistent) {
             num_files++;
         }
-        if (flash_read_uintptr(base) == 0x0) {
+        uintptr_t next = flash_read_uintptr(base);
+        if (next == 0x0) {
             if (base < last_base) {
                 last_base = base;
             }
             break;
         }
+        if (next < startp || next > endp - 12 || next == base) {
+            if (!persistent && base < last_base) {
+                last_base = base;
+            }
+            break;
+        }
+        base = next;
     }
 }
 void file_scan_flash(void) {

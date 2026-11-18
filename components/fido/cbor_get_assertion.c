@@ -206,7 +206,9 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
     }
     CBOR_PARSE_MAP_END(map, 1);
 
-    if (rpId.present == false || clientDataHash.present == false) {
+    if (rpId.present == false || rpId.data == NULL || rpId.len == 0 ||
+        clientDataHash.present == false || clientDataHash.data == NULL ||
+        clientDataHash.len != 32) {
         CBOR_ERROR(CTAP2_ERR_MISSING_PARAMETER);
     }
     rp_id = rpId.data;
@@ -375,13 +377,16 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
                 if (creds[i].extensions.present == true) {
                     if (creds[i].extensions.credProtect == CRED_PROT_UV_REQUIRED && !(flags & FIDO2_AUT_FLAG_UV)) {
                         credential_free(&creds[i]);
+                        memset(&creds[i], 0, sizeof(Credential));
                     }
                     else if (creds[i].extensions.credProtect == CRED_PROT_UV_OPTIONAL_WITH_LIST && allowList_len == 0 && !(flags & FIDO2_AUT_FLAG_UV)) {
                         credential_free(&creds[i]);
+                        memset(&creds[i], 0, sizeof(Credential));
                     }
                     else {
                         if (numberOfCredentials != i) {
                             creds[numberOfCredentials++] = creds[i];
+                            memset(&creds[i], 0, sizeof(Credential));
                         }
                         else {
                             numberOfCredentials++;
@@ -490,6 +495,9 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
                 }
                 numberOfCredentialsx = numberOfCredentials;
                 datax = (uint8_t *) calloc(1, len);
+                if (datax == NULL) {
+                    CBOR_ERROR(CTAP2_ERR_PROCESSING);
+                }
                 memcpy(datax, data, len);
                 lenx = len;
                 flagsx = flags;
@@ -618,6 +626,9 @@ int cbor_get_assertion(const uint8_t *data, size_t len, bool next) {
 
     size_t aut_data_len = 32 + 1 + 4 + ext_len;
     aut_data = (uint8_t *) calloc(1, aut_data_len + clientDataHash.len);
+    if (aut_data == NULL) {
+        CBOR_ERROR(CTAP1_ERR_OTHER);
+    }
     uint8_t *pa = aut_data;
     memcpy(pa, rp_id_hash, 32); pa += 32;
     *pa++ = flags;

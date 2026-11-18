@@ -66,6 +66,9 @@ const uint8_t *random_bytes_get(size_t len) {
     if (random_mutex_initialized) {
         mutex_enter_blocking(&random_mutex);
     }
+    /* Do not leave the previous caller's random bytes (possibly key material)
+       readable through the shared return buffer. */
+    memset(return_word, 0, sizeof(return_word));
     if (random_fill_index != 0) {
         /* Do not hand out the partially consumed block: the iterator has
            already returned its prefix to another caller. */
@@ -89,6 +92,9 @@ const uint8_t *random_bytes_get(size_t len) {
 int random_fill_iterator(void *arg, unsigned char *out, size_t out_len) {
     random_fill_iterator_ctx_t *ctx = (random_fill_iterator_ctx_t *) arg;
     uint32_t index = ctx ? ctx->index : random_fill_index;
+    if (index >= RANDOM_BYTES_LENGTH) {
+        index = 0;
+    }
     uint8_t n;
     int ret = 0;
 

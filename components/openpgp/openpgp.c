@@ -832,39 +832,49 @@ int load_aes_key(uint8_t *aes_key, file_t *fkey) {
     return PICOKEYS_OK;
 }
 
+static bool algo_attr_matches(const uint8_t *algo, size_t algo_len, const uint8_t *attr) {
+    /* attr[0] is the total length; the OID starts at attr[1] and the
+       helper is called with the OID pointer + length. */
+    size_t attr_len = attr[0] > 1 ? (size_t)attr[0] - 1 : 0;
+    return algo_len == attr_len && memcmp(attr + 2, algo, attr_len) == 0;
+}
+
 mbedtls_ecp_group_id get_ec_group_id_from_attr(const uint8_t *algo, size_t algo_len) {
-    if (memcmp(algorithm_attr_p256k1 + 2, algo, algo_len) == 0) {
+    if (algo == NULL) {
+        return MBEDTLS_ECP_DP_NONE;
+    }
+    if (algo_attr_matches(algo, algo_len, algorithm_attr_p256k1)) {
         return MBEDTLS_ECP_DP_SECP256K1;
     }
-    else if (memcmp(algorithm_attr_p256r1 + 2, algo, algo_len) == 0) {
+    else if (algo_attr_matches(algo, algo_len, algorithm_attr_p256r1)) {
         return MBEDTLS_ECP_DP_SECP256R1;
     }
-    else if (memcmp(algorithm_attr_p384r1 + 2, algo, algo_len) == 0) {
+    else if (algo_attr_matches(algo, algo_len, algorithm_attr_p384r1)) {
         return MBEDTLS_ECP_DP_SECP384R1;
     }
-    else if (memcmp(algorithm_attr_p521r1 + 2, algo, algo_len) == 0) {
+    else if (algo_attr_matches(algo, algo_len, algorithm_attr_p521r1)) {
         return MBEDTLS_ECP_DP_SECP521R1;
     }
-    else if (memcmp(algorithm_attr_bp256r1 + 2, algo, algo_len) == 0) {
+    else if (algo_attr_matches(algo, algo_len, algorithm_attr_bp256r1)) {
         return MBEDTLS_ECP_DP_BP256R1;
     }
-    else if (memcmp(algorithm_attr_bp384r1 + 2, algo, algo_len) == 0) {
+    else if (algo_attr_matches(algo, algo_len, algorithm_attr_bp384r1)) {
         return MBEDTLS_ECP_DP_BP384R1;
     }
-    else if (memcmp(algorithm_attr_bp512r1 + 2, algo, algo_len) == 0) {
+    else if (algo_attr_matches(algo, algo_len, algorithm_attr_bp512r1)) {
         return MBEDTLS_ECP_DP_BP512R1;
     }
-    else if (memcmp(algorithm_attr_cv25519 + 2, algo, algo_len) == 0) {
+    else if (algo_attr_matches(algo, algo_len, algorithm_attr_cv25519)) {
         return MBEDTLS_ECP_DP_CURVE25519;
     }
-    else if (memcmp(algorithm_attr_x448 + 2, algo, algo_len) == 0) {
+    else if (algo_attr_matches(algo, algo_len, algorithm_attr_x448)) {
         return MBEDTLS_ECP_DP_CURVE448;
     }
 #ifdef MBEDTLS_EDDSA_C
-    else if (memcmp(algorithm_attr_ed25519 + 2, algo, algo_len) == 0) {
+    else if (algo_attr_matches(algo, algo_len, algorithm_attr_ed25519)) {
         return MBEDTLS_ECP_DP_ED25519;
     }
-    else if (memcmp(algorithm_attr_ed448 + 2, algo, algo_len) == 0) {
+    else if (algo_attr_matches(algo, algo_len, algorithm_attr_ed448)) {
         return MBEDTLS_ECP_DP_ED448;
     }
 #endif
@@ -1049,7 +1059,10 @@ static const cmd_t cmds[] = {
     { INS_VERSION, cmd_version_openpgp },
     { INS_SELECT_DATA, cmd_select_data },
     { INS_GET_NEXT_DATA, cmd_get_next_data },
-    { INS_GET_BULK_DATA, cmd_get_bulk_data },
+    /* INS_GET_BULK_DATA (0xCE) is disabled until bulk_cmd() has a strict
+       response-capacity contract: one unauthenticated APDU could otherwise
+       write hundreds of KB into the 2038-byte CCID TX buffer. */
+    // { INS_GET_BULK_DATA, cmd_get_bulk_data },
     { 0x00, NULL }
 };
 

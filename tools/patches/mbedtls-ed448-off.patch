@@ -1,0 +1,16 @@
+diff --git a/include/mbedtls/mbedtls_config.h b/include/mbedtls/mbedtls_config.h
+index 511f406..0bd5eae 100644
+--- a/include/mbedtls/mbedtls_config.h
++++ b/include/mbedtls/mbedtls_config.h
+@@ -776,7 +776,10 @@
+ #define MBEDTLS_ECP_DP_CURVE448_ENABLED
+ /* Edwards curves (supporting ECP, EdDSA) */
+ #define MBEDTLS_ECP_DP_ED25519_ENABLED
+-#define MBEDTLS_ECP_DP_ED448_ENABLED
++/* Ed448 is not needed - we only support Ed25519.
++ * Keeping it enabled would require SHA-3 (MBEDTLS_SHA3_C) which is not
++ * configured in this project, causing check_config.h to error out. */
++/* #define MBEDTLS_ECP_DP_ED448_ENABLED */
+ 
+ /**
+  * \def MBEDTLS_ECP_NIST_OPTIM
