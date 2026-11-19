@@ -923,6 +923,12 @@ int piv_protect_legacy_keys(void) {
 
     for (size_t r = 0; r < sizeof(ranges) / sizeof(ranges[0]); r++) {
         for (uint16_t fid = ranges[r][0]; fid <= ranges[r][1]; fid++) {
+            /* 0x9B is the PIV management key (3DES/AES), not an asymmetric
+               private key. mig_piv_auth reads it raw for mbedtls_des3/aes
+               setup, so it must not be wrapped. */
+            if (fid == EF_PIV_KEY_CARDMGM) {
+                continue;
+            }
             file_t *ef = file_search_by_fid(fid, NULL, SPECIFY_EF);
             if (!ef || !ef->data) {
                 continue;
