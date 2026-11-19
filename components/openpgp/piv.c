@@ -246,7 +246,7 @@ static void scan_files_piv(void) {
             mbedtls_ecdsa_context ecdsa;
             mbedtls_ecdsa_init(&ecdsa);
             int r = mbedtls_ecdsa_genkey(&ecdsa, MBEDTLS_ECP_DP_SECP384R1, random_fill_iterator, NULL);
-            r = store_keys(&ecdsa, ALGO_ECDSA, EF_PIV_KEY_ATTESTATION, false);
+            r = store_keys_piv(&ecdsa, ALGO_ECDSA, EF_PIV_KEY_ATTESTATION);
             uint8_t cert[2048];
             r = x509_create_cert(&ecdsa, PIV_ALGO_ECCP384, EF_PIV_KEY_ATTESTATION, false, cert, sizeof(cert));
             ef = file_search_by_fid(EF_PIV_ATTESTATION, NULL, SPECIFY_ANY);

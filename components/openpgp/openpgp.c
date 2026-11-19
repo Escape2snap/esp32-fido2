@@ -877,8 +877,7 @@ int store_keys(void *key_ctx, int type, uint16_t key_id, bool use_kek) {
 
 /* PIV private keys are written with a DEK envelope when a PIN session is
  * available, or with the device-bound kbase envelope otherwise. OpenPGP keys
- * keep using store_keys(..., true); PIV attestation keys stay legacy plaintext
- * until early-init key availability is verified. */
+ * keep using store_keys(..., true). */
 int store_keys_piv(void *key_ctx, int type, uint16_t key_id) {
     /* FID 0x9B holds the raw 3DES/AES management key; it is not an
        asymmetric private key and must not be enveloped. */
