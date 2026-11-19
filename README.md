@@ -346,8 +346,9 @@ secrets are encrypted with the device key. PIV private keys are wrapped in
 a `PIVKEY1` (DEK) or `PIVKEY2` (device-bound `kbase`) envelope; the
 latter keeps raw keys off flash when only the PIV management key is
 available, but it is **not PIN-protected** — a full flash dump can derive
-`kbase`. The PIV management key itself is still stored unencrypted.
-Enable Secure Boot and Flash Encryption before production, or add a
+`kbase`. The PIV management key (0x9B) is also wrapped with `kbase`
+and unwrapped only for authentication. Enable Secure Boot and Flash
+Encryption before production, or add a
 PIV-PIN-wrapped KEK. On the first PIV scan after an upgrade, legacy
 plaintext PIV private-key files are wrapped once; a file that cannot be
 wrapped is left untouched. The optional OTP key adds entropy; without it,
