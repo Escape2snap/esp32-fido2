@@ -348,7 +348,9 @@ latter keeps raw keys off flash when only the PIV management key is
 available, but it is **not PIN-protected** — a full flash dump can derive
 `kbase`. The PIV management key itself is still stored unencrypted.
 Enable Secure Boot and Flash Encryption before production, or add a
-PIV-PIN-wrapped KEK. The optional OTP key adds entropy; without it,
+PIV-PIN-wrapped KEK. On the first PIV scan after an upgrade, legacy
+plaintext PIV private-key files are wrapped once; a file that cannot be
+wrapped is left untouched. The optional OTP key adds entropy; without it,
 physical flash readout plus the chip serial number is sufficient to
 attempt an offline brute-force of the device root.
 
