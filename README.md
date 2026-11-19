@@ -342,12 +342,15 @@ random 32-byte device salt (first boot)
 ```
 
 OpenPGP private keys are encrypted with the DEK, and FIDO credential
-secrets are encrypted with the device key. **PIV private keys are
-currently stored unencrypted in the filesystem**; enable Secure Boot and
-Flash Encryption before production, or migrate PIV keys to the same DEK
-scheme. The optional OTP key adds entropy; without it, physical flash
-readout plus the chip serial number is sufficient to attempt an offline
-brute-force of the device root.
+secrets are encrypted with the device key. PIV private keys are wrapped in
+a `PIVKEY1` (DEK) or `PIVKEY2` (device-bound `kbase`) envelope; the
+latter keeps raw keys off flash when only the PIV management key is
+available, but it is **not PIN-protected** — a full flash dump can derive
+`kbase`. The PIV management key itself is still stored unencrypted.
+Enable Secure Boot and Flash Encryption before production, or add a
+PIV-PIN-wrapped KEK. The optional OTP key adds entropy; without it,
+physical flash readout plus the chip serial number is sufficient to
+attempt an offline brute-force of the device root.
 
 ### PIN / DEK Flow
 
