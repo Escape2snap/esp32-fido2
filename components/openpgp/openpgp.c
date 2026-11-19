@@ -979,6 +979,72 @@ int piv_protect_legacy_keys(void) {
     return changed;
 }
 
+/* The PIV management key (FID 0x9B) is needed before any PIN/DEK session,
+ * so it always uses the kbase envelope. The loader also accepts a legacy raw
+ * value for cards provisioned before the envelope existed. */
+int piv_mgm_load(uint8_t *key, size_t cap, size_t *key_len) {
+    file_t *ef = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_EF);
+    if (!ef || !file_has_data(ef)) {
+        return PICOKEYS_ERR_FILE_NOT_FOUND;
+    }
+    const uint8_t *stored = file_get_data(ef);
+    size_t stored_len = file_get_size(ef);
+    if (stored == NULL || stored_len == 0) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    if (piv_key_is_protected(stored, stored_len)) {
+        return piv_key_unprotect(stored, stored_len, key, cap, key_len);
+    }
+    if (stored_len > cap) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    memcpy(key, stored, stored_len);
+    *key_len = stored_len;
+    return PICOKEYS_OK;
+}
+
+int piv_mgm_store(const uint8_t *key, size_t key_len) {
+    if (key == NULL || (key_len != 16 && key_len != 24 && key_len != 32)) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    file_t *ef = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_EF);
+    if (!ef) {
+        return PICOKEYS_ERR_FILE_NOT_FOUND;
+    }
+    uint8_t wrapped[PIV_KEY_MAX_HDR_LEN + 32];
+    size_t wrapped_len = 0;
+    int r = piv_key_protect_kbase(key, key_len, wrapped, sizeof(wrapped), &wrapped_len);
+    if (r != PICOKEYS_OK) {
+        mbedtls_platform_zeroize(wrapped, sizeof(wrapped));
+        return r;
+    }
+    r = file_put_data(ef, wrapped, (uint16_t) wrapped_len);
+    mbedtls_platform_zeroize(wrapped, sizeof(wrapped));
+    if (r != PICOKEYS_OK) {
+        return r;
+    }
+    flash_commit();
+    return PICOKEYS_OK;
+}
+
+int piv_mgm_migrate(void) {
+    file_t *ef = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_EF);
+    if (!ef || !file_has_data(ef)) {
+        return 0;
+    }
+    const uint8_t *stored = file_get_data(ef);
+    size_t stored_len = file_get_size(ef);
+    if (stored == NULL || stored_len == 0 || piv_key_is_protected(stored, stored_len) ||
+        stored_len > 32) {
+        return 0;
+    }
+    uint8_t raw[32];
+    memcpy(raw, stored, stored_len);
+    int r = piv_mgm_store(raw, stored_len);
+    mbedtls_platform_zeroize(raw, sizeof(raw));
+    return r == PICOKEYS_OK ? 1 : 0;
+}
+
 static int load_key_bytes(file_t *fkey, uint8_t *kdata, size_t cap,
                            size_t *key_size, bool use_dek) {
     const uint8_t *stored = file_get_data(fkey);

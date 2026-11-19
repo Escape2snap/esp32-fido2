@@ -212,7 +212,10 @@ static void scan_files_piv(void) {
 
         uint8_t *key = (uint8_t *)"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08";
         file_t *ef_cardmgm = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_ANY);
-        file_put_data(ef_cardmgm, key, 24);
+        if (piv_mgm_store(key, 24) != PICOKEYS_OK && ef_cardmgm) {
+            /* Last-resort provisioning path; the scan migration retries. */
+            file_put_data(ef_cardmgm, key, 24);
+        }
         uint8_t meta[] = { PIV_ALGO_AES192, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS };
         meta_add(EF_PIV_KEY_CARDMGM, meta, sizeof(meta));
 
@@ -255,6 +258,7 @@ static void scan_files_piv(void) {
         }
     }
     piv_protect_legacy_keys();
+    piv_mgm_migrate();
     flash_commit();
 }
 
@@ -544,7 +548,13 @@ static int cmd_get_metadata(void) {
         }
         else if (key_ref == EF_PIV_KEY_CARDMGM) {
             pin_derive_verifier((const uint8_t *)"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08", 24, dhash);
-            eq = memcmp(dhash, file_get_data(ef_key), file_get_size(ef_key));
+            uint8_t mgm[32];
+            size_t mgm_len = 0;
+            eq = 1;
+            if (piv_mgm_load(mgm, sizeof(mgm), &mgm_len) == PICOKEYS_OK) {
+                eq = memcmp(dhash, mgm, mgm_len);
+            }
+            mbedtls_platform_zeroize(mgm, sizeof(mgm));
         }
         res_APDU[res_APDU_size++] = 0x5;
         res_APDU[res_APDU_size++] = 1;
@@ -586,7 +596,12 @@ static int cmd_authenticate(void) {
         if (!file_has_data(ef_mgm)) {
             return SW_MEMORY_FAILURE();
         }
-        uint16_t mgm_len = file_get_size(ef_mgm);
+        uint8_t mgm[32];
+        size_t mgm_len = 0;
+        if (piv_mgm_load(mgm, sizeof(mgm), &mgm_len) != PICOKEYS_OK) {
+            return SW_MEMORY_FAILURE();
+        }
+        mbedtls_platform_zeroize(mgm, sizeof(mgm));
         if ((algo == PIV_ALGO_AES128 && mgm_len != 16) || (algo == PIV_ALGO_AES192 && mgm_len != 24) || (algo == PIV_ALGO_AES256 && mgm_len != 32) || (algo == PIV_ALGO_3DES && mgm_len != 24)) {
             return SW_INCORRECT_P1P2();
         }
@@ -627,7 +642,11 @@ static int cmd_authenticate(void) {
                 if (!file_has_data(ef_mgm)) {
                     return SW_MEMORY_FAILURE();
                 }
-                uint16_t mgm_len = file_get_size(ef_mgm);
+                uint8_t mgm[32];
+                size_t mgm_len = 0;
+                if (piv_mgm_load(mgm, sizeof(mgm), &mgm_len) != PICOKEYS_OK) {
+                    return SW_MEMORY_FAILURE();
+                }
                 res_APDU[res_APDU_size++] = 0x7C;
                 res_APDU[res_APDU_size++] = 18;
                 res_APDU[res_APDU_size++] = 0x80;
@@ -636,7 +655,8 @@ static int cmd_authenticate(void) {
                 if (algo == PIV_ALGO_3DES) {
                     mbedtls_des3_context ctx;
                     mbedtls_des3_init(&ctx);
-                    r = mbedtls_des3_set3key_enc(&ctx, file_get_data(ef_mgm));
+                    r = mbedtls_des3_set3key_enc(&ctx, mgm);
+                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
                     if (r != 0) {
                         mbedtls_des3_free(&ctx);
                         return SW_EXEC_ERROR();
@@ -648,7 +668,8 @@ static int cmd_authenticate(void) {
                 else {
                     mbedtls_aes_context ctx;
                     mbedtls_aes_init(&ctx);
-                    r = mbedtls_aes_setkey_enc(&ctx, file_get_data(ef_mgm), mgm_len * 8);
+                    r = mbedtls_aes_setkey_enc(&ctx, mgm, mgm_len * 8);
+                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
                     if (r != 0) {
                         mbedtls_aes_free(&ctx);
                         return SW_EXEC_ERROR();
@@ -807,13 +828,18 @@ static int cmd_authenticate(void) {
             if (!file_has_data(ef_key)) {
                 return SW_MEMORY_FAILURE();
             }
-            uint16_t key_len = file_get_size(ef_key);
+            uint8_t mgm[32];
+            size_t key_len = 0;
+            if (piv_mgm_load(mgm, sizeof(mgm), &key_len) != PICOKEYS_OK) {
+                return SW_MEMORY_FAILURE();
+            }
             int r = 0;
             if (algo == PIV_ALGO_3DES)
             {
                 mbedtls_des3_context ctx;
                 mbedtls_des3_init(&ctx);
-                r = mbedtls_des3_set3key_dec(&ctx, file_get_data(ef_key));
+                r = mbedtls_des3_set3key_dec(&ctx, mgm);
+                mbedtls_platform_zeroize(mgm, sizeof(mgm));
                 if (r != 0) {
                     mbedtls_des3_free(&ctx);
                     return SW_EXEC_ERROR();
@@ -824,7 +850,8 @@ static int cmd_authenticate(void) {
             else {
                 mbedtls_aes_context ctx;
                 mbedtls_aes_init(&ctx);
-                r = mbedtls_aes_setkey_dec(&ctx, file_get_data(ef_key), key_len * 8);
+                r = mbedtls_aes_setkey_dec(&ctx, mgm, key_len * 8);
+                mbedtls_platform_zeroize(mgm, sizeof(mgm));
                 if (r != 0) {
                     mbedtls_aes_free(&ctx);
                     return SW_EXEC_ERROR();
@@ -1012,8 +1039,9 @@ static int cmd_set_mgmkey(void) {
     if ((key_ref != EF_PIV_KEY_CARDMGM) || (!(algo == PIV_ALGO_AES128 && pinlen == 16) && !(algo == PIV_ALGO_AES192 && pinlen == 24) && !(algo == PIV_ALGO_AES256 && pinlen == 32) && !(algo == PIV_ALGO_3DES && pinlen == 24))) {
         return SW_WRONG_DATA();
     }
-    file_t *ef = file_search_by_fid(key_ref, NULL, SPECIFY_ANY);
-    file_put_data(ef, apdu.data + 3, pinlen);
+    if (piv_mgm_store(apdu.data + 3, pinlen) != PICOKEYS_OK) {
+        return SW_EXEC_ERROR();
+    }
     uint8_t *meta = NULL, new_meta[4];
     int meta_len = 0;
     if ((meta_len = meta_find(key_ref, &meta)) <= 0) {
@@ -1036,6 +1064,11 @@ static int cmd_move_key(void) {
     }
     uint8_t to = P1(apdu), from = P2(apdu);
     if ((!IS_KEY(to) && to != 0xFF) || !IS_KEY(from)) {
+        return SW_INCORRECT_P1P2();
+    }
+    /* The management key has no asymmetric MOVE KEY semantics; moving its
+       envelope into a key slot would corrupt both representations. */
+    if (from == EF_PIV_KEY_CARDMGM || to == EF_PIV_KEY_CARDMGM) {
         return SW_INCORRECT_P1P2();
     }
     if (IS_RETIRED(from) && IS_ACTIVE(to)) {
