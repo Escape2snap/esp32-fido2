@@ -880,6 +880,11 @@ int store_keys(void *key_ctx, int type, uint16_t key_id, bool use_kek) {
  * keep using store_keys(..., true); PIV attestation keys stay legacy plaintext
  * until early-init key availability is verified. */
 int store_keys_piv(void *key_ctx, int type, uint16_t key_id) {
+    /* FID 0x9B holds the raw 3DES/AES management key; it is not an
+       asymmetric private key and must not be enveloped. */
+    if (key_id == EF_PIV_KEY_CARDMGM) {
+        return PICOKEYS_WRONG_DATA;
+    }
     uint8_t kdata[PIV_KEY_MAX_LEN];
     uint8_t wrapped[PIV_KEY_MAX_HDR_LEN + PIV_KEY_MAX_LEN];
     size_t key_size = 0, wrapped_len = 0;
@@ -969,6 +974,7 @@ int piv_protect_legacy_keys(void) {
         }
     }
     if (changed > 0) {
+        printf("PIV: wrapped %d legacy key file(s)\r\n", changed);
         flash_commit();
     }
     return changed;
