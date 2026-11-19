@@ -697,33 +697,71 @@ int reset_sig_count(void) {
     return PICOKEYS_OK;
 }
 
-/* PIV private-key envelope: ["PIVKEY1\0"][len:2 BE][CFB ciphertext].
- * Legacy plaintext PIV keys (and OpenPGP DEK-encrypted keys) do not carry the
- * magic and keep their existing format; the loader only unwraps on a match. */
-#define PIV_KEY_MAGIC       "PIVKEY1"
+/* PIV private-key envelopes:
+ *   PIVKEY1: [magic:8][len:2 BE][DEK CFB ciphertext]
+ *   PIVKEY2: [magic:8][len:2 BE][iv:16][kbase CFB ciphertext]
+ *
+ * PIVKEY1 is used when an OpenPGP/PIV PIN session can derive the DEK.
+ * PIV import is often authorized by the management key only, so PIVKEY2 uses
+ * the device-bound kbase as a fallback; it is not a PIN-derived secret, but it
+ * keeps raw private keys off the flash until Secure Boot/Flash Encryption or a
+ * future PIV PIN-wrapped KEK is available. */
+#define PIV_KEY_MAGIC_DEK   "PIVKEY1"
+#define PIV_KEY_MAGIC_KBASE "PIVKEY2"
 #define PIV_KEY_MAGIC_LEN   8
-#define PIV_KEY_HDR_LEN     10
+#define PIV_KEY_DEK_HDR_LEN 10
+#define PIV_KEY_KBASE_HDR_LEN (10 + 16)
+#define PIV_KEY_MAX_HDR_LEN PIV_KEY_KBASE_HDR_LEN
 #define PIV_KEY_MAX_LEN     512
 
 static bool piv_key_is_protected(const uint8_t *data, size_t len) {
-    return data != NULL && len >= PIV_KEY_HDR_LEN + 1 &&
-           memcmp(data, PIV_KEY_MAGIC, PIV_KEY_MAGIC_LEN) == 0;
+    return data != NULL && len >= PIV_KEY_DEK_HDR_LEN + 1 &&
+           (memcmp(data, PIV_KEY_MAGIC_DEK, PIV_KEY_MAGIC_LEN) == 0 ||
+            memcmp(data, PIV_KEY_MAGIC_KBASE, PIV_KEY_MAGIC_LEN) == 0);
 }
 
-static int piv_key_protect(const uint8_t *plain, size_t len, uint8_t *out, size_t out_cap) {
-    if (plain == NULL || out == NULL || len == 0 || len > PIV_KEY_MAX_LEN ||
-        out_cap < PIV_KEY_HDR_LEN + len) {
+static int piv_key_protect_kbase(const uint8_t *plain, size_t len,
+                                 uint8_t *out, size_t out_cap, size_t *out_len) {
+    if (out_cap < PIV_KEY_KBASE_HDR_LEN + len) {
         return PICOKEYS_WRONG_DATA;
     }
-    memcpy(out, PIV_KEY_MAGIC, PIV_KEY_MAGIC_LEN);
+    uint8_t kbase[32];
+    derive_kbase(kbase);
+    memcpy(out, PIV_KEY_MAGIC_KBASE, PIV_KEY_MAGIC_LEN);
     out[8] = (uint8_t) (len >> 8);
     out[9] = (uint8_t) (len & 0xff);
-    memcpy(out + PIV_KEY_HDR_LEN, plain, len);
-    int r = dek_encrypt(out + PIV_KEY_HDR_LEN, len);
+    memcpy(out + 10, random_bytes_get(16), 16);
+    memcpy(out + PIV_KEY_KBASE_HDR_LEN, plain, len);
+    int r = aes_encrypt_cfb_256(kbase, out + 10, out + PIV_KEY_KBASE_HDR_LEN, (uint16_t) len);
+    mbedtls_platform_zeroize(kbase, sizeof(kbase));
     if (r != PICOKEYS_OK) {
-        mbedtls_platform_zeroize(out, PIV_KEY_HDR_LEN + len);
+        mbedtls_platform_zeroize(out, PIV_KEY_KBASE_HDR_LEN + len);
+        return r;
     }
-    return r;
+    *out_len = PIV_KEY_KBASE_HDR_LEN + len;
+    return PICOKEYS_OK;
+}
+
+static int piv_key_protect(const uint8_t *plain, size_t len,
+                           uint8_t *out, size_t out_cap, size_t *out_len) {
+    if (plain == NULL || out == NULL || out_len == NULL || len == 0 ||
+        len > PIV_KEY_MAX_LEN) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    if (out_cap < PIV_KEY_DEK_HDR_LEN + len) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    memcpy(out, PIV_KEY_MAGIC_DEK, PIV_KEY_MAGIC_LEN);
+    out[8] = (uint8_t) (len >> 8);
+    out[9] = (uint8_t) (len & 0xff);
+    memcpy(out + PIV_KEY_DEK_HDR_LEN, plain, len);
+    int r = dek_encrypt(out + PIV_KEY_DEK_HDR_LEN, len);
+    if (r == PICOKEYS_OK) {
+        *out_len = PIV_KEY_DEK_HDR_LEN + len;
+        return PICOKEYS_OK;
+    }
+    mbedtls_platform_zeroize(out, PIV_KEY_DEK_HDR_LEN + len);
+    return piv_key_protect_kbase(plain, len, out, out_cap, out_len);
 }
 
 static int piv_key_unprotect(const uint8_t *stored, size_t stored_len,
@@ -732,15 +770,33 @@ static int piv_key_unprotect(const uint8_t *stored, size_t stored_len,
         return PICOKEYS_WRONG_DATA;
     }
     size_t len = ((size_t) stored[8] << 8) | stored[9];
-    if (len == 0 || len > PIV_KEY_MAX_LEN || len > plain_cap ||
-        stored_len != PIV_KEY_HDR_LEN + len) {
+    if (len == 0 || len > PIV_KEY_MAX_LEN || len > plain_cap) {
         return PICOKEYS_WRONG_DATA;
     }
-    memcpy(plain, stored + PIV_KEY_HDR_LEN, len);
-    int r = dek_decrypt(plain, len);
-    if (r != PICOKEYS_OK) {
-        mbedtls_platform_zeroize(plain, len);
-        return PICOKEYS_EXEC_ERROR;
+    if (memcmp(stored, PIV_KEY_MAGIC_DEK, PIV_KEY_MAGIC_LEN) == 0) {
+        if (stored_len != PIV_KEY_DEK_HDR_LEN + len) {
+            return PICOKEYS_WRONG_DATA;
+        }
+        memcpy(plain, stored + PIV_KEY_DEK_HDR_LEN, len);
+        int r = dek_decrypt(plain, len);
+        if (r != PICOKEYS_OK) {
+            mbedtls_platform_zeroize(plain, len);
+            return PICOKEYS_EXEC_ERROR;
+        }
+    }
+    else {
+        if (stored_len != PIV_KEY_KBASE_HDR_LEN + len) {
+            return PICOKEYS_WRONG_DATA;
+        }
+        uint8_t kbase[32];
+        derive_kbase(kbase);
+        memcpy(plain, stored + PIV_KEY_KBASE_HDR_LEN, len);
+        int r = aes_decrypt_cfb_256(kbase, stored + 10, plain, (uint16_t) len);
+        mbedtls_platform_zeroize(kbase, sizeof(kbase));
+        if (r != PICOKEYS_OK) {
+            mbedtls_platform_zeroize(plain, len);
+            return PICOKEYS_EXEC_ERROR;
+        }
     }
     *plain_len = len;
     return PICOKEYS_OK;
@@ -819,13 +875,14 @@ int store_keys(void *key_ctx, int type, uint16_t key_id, bool use_kek) {
     return PICOKEYS_OK;
 }
 
-/* PIV private keys are written with the authenticated-device DEK envelope.
- * OpenPGP keys keep using store_keys(..., true); PIV attestation keys stay
- * legacy plaintext until the DEK is guaranteed during early init. */
+/* PIV private keys are written with a DEK envelope when a PIN session is
+ * available, or with the device-bound kbase envelope otherwise. OpenPGP keys
+ * keep using store_keys(..., true); PIV attestation keys stay legacy plaintext
+ * until early-init key availability is verified. */
 int store_keys_piv(void *key_ctx, int type, uint16_t key_id) {
     uint8_t kdata[PIV_KEY_MAX_LEN];
-    uint8_t wrapped[PIV_KEY_HDR_LEN + PIV_KEY_MAX_LEN];
-    size_t key_size = 0;
+    uint8_t wrapped[PIV_KEY_MAX_HDR_LEN + PIV_KEY_MAX_LEN];
+    size_t key_size = 0, wrapped_len = 0;
     file_t *ef = file_search_by_fid(key_id, NULL, SPECIFY_EF);
     if (!ef) {
         return PICOKEYS_ERR_FILE_NOT_FOUND;
@@ -835,30 +892,80 @@ int store_keys_piv(void *key_ctx, int type, uint16_t key_id) {
         mbedtls_platform_zeroize(kdata, sizeof(kdata));
         return r;
     }
-    r = piv_key_protect(kdata, key_size, wrapped, sizeof(wrapped));
-    if (r != PICOKEYS_OK) {
-        /* PIV import is authorized by the management key and may run without
-           an OpenPGP/PIV PIN session, so the DEK can be unavailable. Keep the
-           legacy plaintext representation in that case; the loader accepts
-           both formats. Requiring PIN-unlock for every PIV write is the next
-           step. */
-        r = file_put_data(ef, kdata, (uint16_t) key_size);
-        mbedtls_platform_zeroize(kdata, sizeof(kdata));
-        mbedtls_platform_zeroize(wrapped, sizeof(wrapped));
-        if (r != PICOKEYS_OK) {
-            return r;
-        }
-        flash_commit();
-        return PICOKEYS_OK;
-    }
+    r = piv_key_protect(kdata, key_size, wrapped, sizeof(wrapped), &wrapped_len);
     mbedtls_platform_zeroize(kdata, sizeof(kdata));
-    r = file_put_data(ef, wrapped, (uint16_t) (PIV_KEY_HDR_LEN + key_size));
+    if (r != PICOKEYS_OK) {
+        mbedtls_platform_zeroize(wrapped, sizeof(wrapped));
+        return r;
+    }
+    r = file_put_data(ef, wrapped, (uint16_t) wrapped_len);
     mbedtls_platform_zeroize(wrapped, sizeof(wrapped));
     if (r != PICOKEYS_OK) {
         return r;
     }
     flash_commit();
     return PICOKEYS_OK;
+}
+
+/* One-time migration for cards provisioned before the envelope existed.
+ * Runs after scan_files_piv() has created the attestation key, so it also
+ * wraps that key. Protected files are skipped; a plaintext file that cannot be
+ * wrapped is left untouched rather than risking the only key copy. */
+int piv_protect_legacy_keys(void) {
+    static const uint16_t ranges[][2] = {
+        { EF_PIV_KEY_RETIRED1, EF_PIV_KEY_RETIRED17 },
+        { EF_PIV_KEY_RETIRED19, EF_PIV_KEY_RETIRED18 },
+        { EF_PIV_KEY_AUTHENTICATION, EF_PIV_KEY_CARDAUTH },
+    };
+    uint8_t plain[PIV_KEY_MAX_LEN];
+    uint8_t wrapped[PIV_KEY_MAX_HDR_LEN + PIV_KEY_MAX_LEN];
+    int changed = 0;
+
+    for (size_t r = 0; r < sizeof(ranges) / sizeof(ranges[0]); r++) {
+        for (uint16_t fid = ranges[r][0]; fid <= ranges[r][1]; fid++) {
+            file_t *ef = file_search_by_fid(fid, NULL, SPECIFY_EF);
+            if (!ef || !ef->data) {
+                continue;
+            }
+            uint16_t len = file_get_size(ef);
+            const uint8_t *data = file_get_data(ef);
+            if (len == 0 || len > sizeof(plain) || data == NULL ||
+                piv_key_is_protected(data, len)) {
+                continue;
+            }
+            memcpy(plain, data, len);
+            size_t wrapped_len = 0;
+            if (piv_key_protect(plain, len, wrapped, sizeof(wrapped), &wrapped_len) ==
+                    PICOKEYS_OK &&
+                file_put_data(ef, wrapped, (uint16_t) wrapped_len) == PICOKEYS_OK) {
+                changed++;
+            }
+            mbedtls_platform_zeroize(plain, sizeof(plain));
+            mbedtls_platform_zeroize(wrapped, sizeof(wrapped));
+        }
+    }
+    /* Attestation is outside the numeric key ranges (0xfb). */
+    file_t *ef = file_search_by_fid(EF_PIV_KEY_ATTESTATION, NULL, SPECIFY_EF);
+    if (ef && ef->data) {
+        uint16_t len = file_get_size(ef);
+        const uint8_t *data = file_get_data(ef);
+        if (len > 0 && len <= sizeof(plain) && data != NULL &&
+            !piv_key_is_protected(data, len)) {
+            memcpy(plain, data, len);
+            size_t wrapped_len = 0;
+            if (piv_key_protect(plain, len, wrapped, sizeof(wrapped), &wrapped_len) ==
+                    PICOKEYS_OK &&
+                file_put_data(ef, wrapped, (uint16_t) wrapped_len) == PICOKEYS_OK) {
+                changed++;
+            }
+            mbedtls_platform_zeroize(plain, sizeof(plain));
+            mbedtls_platform_zeroize(wrapped, sizeof(wrapped));
+        }
+    }
+    if (changed > 0) {
+        flash_commit();
+    }
+    return changed;
 }
 
 static int load_key_bytes(file_t *fkey, uint8_t *kdata, size_t cap,

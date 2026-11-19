@@ -254,6 +254,7 @@ static void scan_files_piv(void) {
             mbedtls_ecdsa_free(&ecdsa);
         }
     }
+    piv_protect_legacy_keys();
     flash_commit();
 }
 
