@@ -1042,7 +1042,11 @@ int piv_mgm_migrate(void) {
     memcpy(raw, stored, stored_len);
     int r = piv_mgm_store(raw, stored_len);
     mbedtls_platform_zeroize(raw, sizeof(raw));
-    return r == PICOKEYS_OK ? 1 : 0;
+    if (r == PICOKEYS_OK) {
+        printf("PIV: wrapped management key\r\n");
+        return 1;
+    }
+    return 0;
 }
 
 static int load_key_bytes(file_t *fkey, uint8_t *kdata, size_t cap,
