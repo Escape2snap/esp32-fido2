@@ -274,11 +274,15 @@ static int piv_unload(void) {
 
 static void select_piv_aid(void) {
     res_APDU[res_APDU_size++] = 0x61;
-    res_APDU[res_APDU_size++] = 0; //filled later
+    uint16_t fci_len_off = res_APDU_size;
+    res_APDU[res_APDU_size++] = 0; //filled at the end
+    /* 800-73-4: 4F carries the PIX (the part after the 5-byte RID),
+       not a two-byte placeholder. OpenSC's PIV driver matches this to
+       piv_aids[] and rejects the card otherwise. */
     res_APDU[res_APDU_size++] = 0x4F;
-    res_APDU[res_APDU_size++] = 2;
-    res_APDU[res_APDU_size++] = 0x01;
-    res_APDU[res_APDU_size++] = 0x00;
+    res_APDU[res_APDU_size++] = 6;
+    memcpy(res_APDU + res_APDU_size, "\x00\x00\x10\x00\x01\x00", 6);
+    res_APDU_size += 6;
     res_APDU[res_APDU_size++] = 0x79;
     res_APDU[res_APDU_size++] = 9;
     memcpy(res_APDU + res_APDU_size, "\xA0\x00\x00\x03\x08\x00\x00\x10\x00", 9);
@@ -297,6 +301,7 @@ static void select_piv_aid(void) {
     res_APDU[res_APDU_size++] = 0x6;
     res_APDU[res_APDU_size++] = 1;
     res_APDU[res_APDU_size++] = 0x00;
+    res_APDU[fci_len_off] = (uint8_t) (res_APDU_size - 2);
 }
 
 static int piv_select_aid(app_t *a, uint8_t force) {
