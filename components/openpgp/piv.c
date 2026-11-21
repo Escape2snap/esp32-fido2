@@ -262,12 +262,9 @@ static void scan_files_piv(void) {
     flash_commit();
 }
 
-extern bool has_mgm;
-
 void init_piv(void) {
     scan_files_piv();
     has_pwpiv = false;
-    printf("PIV init: has_mgm=%d\r\n", has_mgm);
     // cmd_select();
 }
 
@@ -724,7 +721,6 @@ static int cmd_authenticate(void) {
             }
             if (memcmp(a80.data, challenge, a80.len) == 0) {
                 has_mgm = true;
-                printf("PIV auth: has_mgm=1\r\n");
             }
         }
     }
@@ -899,7 +895,6 @@ static int cmd_authenticate(void) {
                so a successful 9B login returned 9000 but the following
                GENERATE was rejected with 69 82. */
             has_mgm = true;
-            printf("PIV auth: has_mgm=1 (a82)\r\n");
         }
     }
     if (meta[1] == PINPOLICY_ALWAYS) {
@@ -910,7 +905,6 @@ static int cmd_authenticate(void) {
 
 static int cmd_asym_keygen(void) {
     uint8_t key_ref = P2(apdu);
-    printf("PIV keygen: has_mgm=%d\r\n", has_mgm);
     if (apdu.nc == 0) {
         return SW_WRONG_LENGTH();
     }
