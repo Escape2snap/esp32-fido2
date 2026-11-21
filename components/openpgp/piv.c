@@ -980,9 +980,10 @@ static int cmd_authenticate(void) {
             mbedtls_platform_zeroize(challenge, sizeof(challenge));
         }
     }
-    if (meta[1] == PINPOLICY_ALWAYS) {
-        has_pwpiv = false;
-    }
+    /* GENERAL AUTHENTICATE is not a PIN command: never clear has_pwpiv
+       here (9B's meta PIN policy is ALWAYS, which used to log the PIN out
+       on every admin authentication). PIN status is cleared by VERIFY
+       P1=FF, app deselect, RESET, or a new applet selection. */
     return SW_OK();
 }
 
