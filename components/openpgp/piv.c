@@ -257,9 +257,46 @@ static void scan_files_piv(void) {
             mbedtls_ecdsa_free(&ecdsa);
         }
     }
+    /* P1-4: minimal Card Capability Container (GET DATA wraps it in 53). */
+    if ((ef = file_search_by_fid(EF_PIV_CAPABILITY, NULL, SPECIFY_ANY)) && !file_has_data(ef)) {
+        const uint8_t ccc[] = { 0xF0, 0x00, 0xF1, 0x00, 0xF2, 0x00,
+                                0xF3, 0x00, 0xF4, 0x00, 0xF5, 0x01, 0x10 };
+        file_put_data(ef, ccc, sizeof(ccc));
+    }
     piv_protect_legacy_keys();
     piv_mgm_migrate();
     flash_commit();
+}
+
+/* P1-6: PIV certificate objects are 70 {DER} 71 {info} FE {LRC}. */
+static int piv_store_cert(file_t *ef, const uint8_t *der, size_t der_len) {
+    if (!ef || !der || der_len == 0 || der_len > 2048) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    uint8_t wrapped[2048 + 16];
+    size_t n = 0;
+    wrapped[n++] = 0x70;
+    if (der_len < 0x80) {
+        wrapped[n++] = (uint8_t) der_len;
+    }
+    else if (der_len <= 0xFF) {
+        wrapped[n++] = 0x81;
+        wrapped[n++] = (uint8_t) der_len;
+    }
+    else {
+        wrapped[n++] = 0x82;
+        wrapped[n++] = (uint8_t) (der_len >> 8);
+        wrapped[n++] = (uint8_t) (der_len & 0xFF);
+    }
+    memcpy(wrapped + n, der, der_len);
+    n += der_len;
+    wrapped[n++] = 0x71;
+    wrapped[n++] = 0x01;
+    wrapped[n++] = 0x00;
+    wrapped[n++] = 0xFE;
+    wrapped[n++] = 0x01;
+    wrapped[n++] = 0x00;
+    return file_put_data(ef, wrapped, (uint16_t) n);
 }
 
 void init_piv(void) {
@@ -991,7 +1028,9 @@ static int cmd_asym_keygen(void) {
         uint8_t cert[2048];
         r = x509_create_cert(&rsa, a80.data[0], key_ref, false, cert, sizeof(cert));
         file_t *ef = file_search_by_fid(key_cert, NULL, SPECIFY_ANY);
-        file_put_data(ef, cert + sizeof(cert) - r, r);
+        if (r > 0) {
+            piv_store_cert(ef, cert + sizeof(cert) - r, (size_t) r);
+        }
         r = store_keys_piv(&rsa, ALGO_RSA, key_ref == 0x93 ? EF_PIV_KEY_RETIRED18 : key_ref);
         mbedtls_rsa_free(&rsa);
         if (r != PICOKEYS_OK) {
@@ -1012,7 +1051,9 @@ static int cmd_asym_keygen(void) {
         uint8_t cert[2048];
         r = x509_create_cert(&ecdsa, a80.data[0], key_ref, false, cert, sizeof(cert));
         file_t *ef = file_search_by_fid(key_cert, NULL, SPECIFY_ANY);
-        file_put_data(ef, cert + sizeof(cert) - r, r);
+        if (r > 0) {
+            piv_store_cert(ef, cert + sizeof(cert) - r, (size_t) r);
+        }
         r = store_keys_piv(&ecdsa, ALGO_ECDSA, key_ref == 0x93 ? EF_PIV_KEY_RETIRED18 : key_ref);
         mbedtls_ecdsa_free(&ecdsa);
         if (r != PICOKEYS_OK) {
