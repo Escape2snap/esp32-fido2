@@ -1124,28 +1124,31 @@ static int cmd_piv_put_data(void) {
     if (P1(apdu) != 0x3F || P2(apdu) != 0xFF) {
         return SW_INCORRECT_P1P2();
     }
+    if (apdu.data[0] == 0x7E || (apdu.data[0] == 0x7F && apdu.nc > 1 && apdu.data[1] == 0x61)) {
+        /* Discovery/7F61 provisioning is not implemented; do not silently
+           return success without storing anything. */
+        return SW_FUNC_NOT_SUPPORTED();
+    }
     asn1_ctx_t ctxi, a5c = {0}, a53 = {0};
     asn1_ctx_init(apdu.data, (uint16_t)apdu.nc, &ctxi);
-    if (apdu.data[0] != 0x7E && apdu.data[0] != 0x7F && (!asn1_find_tag(&ctxi, 0x5C, &a5c) || !asn1_find_tag(&ctxi, 0x53, &a53))) {
+    if (!asn1_find_tag(&ctxi, 0x5C, &a5c) || !asn1_find_tag(&ctxi, 0x53, &a53)) {
         return SW_INCORRECT_PARAMS();
     }
-    if (a5c.data && a53.data) {
-        if (a5c.len != 3 || a5c.data[0] != 0x5F || a5c.data[1] != 0xC1) {
-            return SW_INCORRECT_PARAMS();
-        }
-        uint16_t fid = (a5c.data[1] << 8 | a5c.data[2]);
-        file_t *ef = file_search_by_fid(fid, NULL, SPECIFY_EF);
-        if (!ef) {
-            return SW_MEMORY_FAILURE();
-        }
-        if (a53.len > 0) {
-            file_put_data(ef, a53.data, a53.len);
-        }
-        else {
-            flash_clear_file(ef);
-        }
-        flash_commit();
+    if (a5c.len != 3 || a5c.data[0] != 0x5F || a5c.data[1] != 0xC1) {
+        return SW_INCORRECT_PARAMS();
     }
+    uint16_t fid = (a5c.data[1] << 8 | a5c.data[2]);
+    file_t *ef = file_search_by_fid(fid, NULL, SPECIFY_EF);
+    if (!ef) {
+        return SW_FILE_NOT_FOUND();
+    }
+    if (a53.len > 0) {
+        file_put_data(ef, a53.data, a53.len);
+    }
+    else {
+        flash_clear_file(ef);
+    }
+    flash_commit();
     return SW_OK();
 }
 
@@ -1329,6 +1332,9 @@ static int cmd_piv_change_pin(void) {
     dhash[1] = 0x1; // Format
     pin_derive_verifier(apdu.data + pin_data[0], pin_len, dhash + 2);
     file_put_data(ef, dhash, sizeof(dhash));
+    has_pwpiv = true;
+    pin_derive_session(apdu.data + pin_data[0], pin_len, session_pwpiv);
+    pin_reset_retries(ef, true);
     flash_commit();
     return SW_OK();
 }
@@ -1359,6 +1365,8 @@ static int cmd_piv_reset_retry(void) {
     pin_derive_verifier(apdu.data + puk_data[0], pin_len, dhash + 2);
     ef = file_search_by_fid(EF_PIV_PIN, NULL, SPECIFY_ANY);
     file_put_data(ef, dhash, sizeof(dhash));
+    has_pwpiv = true;
+    pin_derive_session(apdu.data + puk_data[0], pin_len, session_pwpiv);
     pin_reset_retries(ef, true);
     flash_commit();
     return SW_OK();
@@ -1369,34 +1377,18 @@ static int cmd_set_retries(void) {
         return SW_SECURITY_STATUS_NOT_SATISFIED();
     }
     file_t *ef = file_search_by_fid(EF_PW_RETRIES, NULL, SPECIFY_ANY);
-    if (!ef) {
+    if (!ef || file_get_size(ef) < 6) {
         return SW_MEMORY_FAILURE();
     }
     uint8_t *tmp = (uint8_t *)calloc(1, file_get_size(ef));
+    if (!tmp) {
+        return SW_MEMORY_FAILURE();
+    }
     memcpy(tmp, file_get_data(ef), file_get_size(ef));
     tmp[4] = P1(apdu);
     tmp[5] = P2(apdu);
     file_put_data(ef, tmp, file_get_size(ef));
     free(tmp);
-
-    ef = file_search_by_fid(EF_PIV_PIN, NULL, SPECIFY_ANY);
-    const uint8_t def_pin[8] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0xFF, 0xFF };
-
-    uint8_t dhash[34];
-    dhash[0] = sizeof(def_pin);
-    dhash[1] = 0x1; // Format
-    pin_derive_verifier(def_pin, sizeof(def_pin), dhash + 2);
-    file_put_data(ef, dhash, sizeof(dhash));
-    pin_reset_retries(ef, true);
-
-    ef = file_search_by_fid(EF_PIV_PUK, NULL, SPECIFY_ANY);
-    const uint8_t def_puk[8] = {0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38};
-    dhash[0] = sizeof(def_puk);
-    dhash[1] = 0x1; // Format
-    pin_derive_verifier(def_puk, sizeof(def_puk), dhash + 2);
-    file_put_data(ef, dhash, sizeof(dhash));
-    pin_reset_retries(ef, true);
-
     flash_commit();
     return SW_OK();
 }
