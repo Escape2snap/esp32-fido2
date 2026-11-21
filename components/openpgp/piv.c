@@ -380,11 +380,18 @@ static int cmd_piv_verify(void) {
     if (file_get_data(pw)[0] == 0) { //not initialized
         return SW_REFERENCE_NOT_FOUND();
     }
+    if (P1(apdu) == 0xFF && apdu.nc == 0) {
+        /* PIV Part 2 3.2.1: VERIFY P1=FF resets the PIN security status. */
+        has_pwpiv = false;
+        mbedtls_platform_zeroize(session_pwpiv, sizeof(session_pwpiv));
+        return SW_OK();
+    }
     if (apdu.nc > 0) {
         uint16_t ret = check_pin(pw, apdu.data, apdu.nc);
         if (ret == 0x9000) {
             has_pwpiv = true;
-            hash_multi(apdu.data, apdu.nc, session_pwpiv);
+            /* Must match the KDF used when EF_DEK_PWPIV was provisioned. */
+            pin_derive_session(apdu.data, apdu.nc, session_pwpiv);
         }
         return ret; //SW already set
     }
@@ -639,11 +646,22 @@ static int cmd_authenticate(void) {
     if (meta[1] == PINPOLICY_DEFAULT) {
         uint8_t new_meta[4];
         memcpy(new_meta, meta, meta_len > 4 ? 4 : meta_len);
-        new_meta[1] = (key_ref == EF_PIV_KEY_SIGNATURE) ? PINPOLICY_ALWAYS : PINPOLICY_ONCE;
+        if (key_ref == EF_PIV_KEY_SIGNATURE) {
+            new_meta[1] = PINPOLICY_ALWAYS;
+        }
+        else if (key_ref == EF_PIV_KEY_CARDAUTH) {
+            new_meta[1] = PINPOLICY_NEVER;
+        }
+        else {
+            new_meta[1] = PINPOLICY_ONCE;
+        }
         meta_add(key_ref, new_meta, sizeof(new_meta));
         meta_find(key_ref, &meta); // re-fetch updated meta
     }
-    if ((meta[1] == PINPOLICY_ALWAYS || meta[1] == PINPOLICY_ONCE) && (!has_pwpiv && (key_ref == EF_PIV_KEY_AUTHENTICATION || key_ref == EF_PIV_KEY_SIGNATURE || key_ref == EF_PIV_KEY_KEYMGM || key_ref == EF_PIV_KEY_CARDAUTH || IS_RETIRED(key_ref)))) {
+    /* 9E Card Authentication is always available (NIST Table 4b). */
+    if (key_ref != EF_PIV_KEY_CARDAUTH &&
+        (meta[1] == PINPOLICY_ALWAYS || meta[1] == PINPOLICY_ONCE) &&
+        (!has_pwpiv && (key_ref == EF_PIV_KEY_AUTHENTICATION || key_ref == EF_PIV_KEY_SIGNATURE || key_ref == EF_PIV_KEY_KEYMGM || IS_RETIRED(key_ref)))) {
         return SW_SECURITY_STATUS_NOT_SATISFIED();
     }
     uint8_t chal_len = (algo == PIV_ALGO_3DES ? sizeof(challenge) / 2 : sizeof(challenge));
@@ -721,6 +739,8 @@ static int cmd_authenticate(void) {
             }
             if (memcmp(a80.data, challenge, a80.len) == 0) {
                 has_mgm = true;
+                has_challenge = false;
+                mbedtls_platform_zeroize(challenge, sizeof(challenge));
             }
         }
     }
@@ -888,6 +908,8 @@ static int cmd_authenticate(void) {
                 return SW_EXEC_ERROR();
             }
             if (memcmp(res_APDU, challenge, chal_len) != 0) {
+                has_challenge = false;
+                mbedtls_platform_zeroize(challenge, sizeof(challenge));
                 return SW_DATA_INVALID();
             }
             /* OpenSC uses a81 (challenge) + a82 (response) for external
@@ -895,6 +917,8 @@ static int cmd_authenticate(void) {
                so a successful 9B login returned 9000 but the following
                GENERATE was rejected with 69 82. */
             has_mgm = true;
+            has_challenge = false;
+            mbedtls_platform_zeroize(challenge, sizeof(challenge));
         }
     }
     if (meta[1] == PINPOLICY_ALWAYS) {
@@ -1003,6 +1027,9 @@ static int cmd_asym_keygen(void) {
     uint8_t def_pinpol = PINPOLICY_ONCE;
     if (key_ref == EF_PIV_KEY_SIGNATURE) {
         def_pinpol = PINPOLICY_ALWAYS;
+    }
+    else if (key_ref == EF_PIV_KEY_CARDAUTH) {
+        def_pinpol = PINPOLICY_NEVER;
     }
     uint8_t meta[] = {a80.data[0], asn1_len(&aaa) ? aaa.data[0] : def_pinpol, asn1_len(&aab) ? aab.data[0] : TOUCHPOLICY_ALWAYS, ORIGIN_GENERATED};
     meta_add(key_ref, meta, sizeof(meta));
@@ -1291,9 +1318,8 @@ static void piv_delete_fid(uint16_t fid) {
 }
 
 static int cmd_reset(void) {
-    if (!has_mgm) {
-        return SW_SECURITY_STATUS_NOT_SATISFIED();
-    }
+    /* Yubico PIV RESET is unauthenticated and only succeeds when the PIN or
+       PUK is blocked; otherwise it returns 6985. */
     if (P1(apdu) != 0x0 || P2(apdu) != 0x0) {
         return SW_INCORRECT_P1P2();
     }
@@ -1303,12 +1329,17 @@ static int cmd_reset(void) {
         return SW_REFERENCE_NOT_FOUND();
     }
     uint8_t retPIN = *(file_get_data(pw_status) + 3 + (EF_PIV_PIN & 0xf)), retPUK = *(file_get_data(pw_status) + 3 + (EF_PIV_PUK & 0xf));
-    if (retPIN != 0 || retPUK != 0) {
-        return SW_INCORRECT_PARAMS();
+    if (retPIN != 0 && retPUK != 0) {
+        return set_res_sw(0x69, 0x85);
     }
     /* PIV RESET must only remove PIV objects.  It used to call
        file_initialize_flash(true), which erased the shared pool and with it
-       all OpenPGP keys and FIDO2 credentials. */
+       all OpenPGP keys and FIDO2 credentials.  Delete the active key slots
+       (9A-9E, including the 9B management key) and their metadata, then the
+       retired/cert/BIT ranges. */
+    for (uint16_t fid = 0x009a; fid <= 0x009e; fid++) {
+        piv_delete_fid(fid);
+    }
     for (uint16_t fid = 0x0082; fid <= 0x0096; fid++) {
         if (fid == EF_SIG_COUNT) { /* 0x0093 belongs to OpenPGP */
             continue;
@@ -1326,6 +1357,15 @@ static int cmd_reset(void) {
     piv_delete_fid(EF_PIV_DISCOVERY);
     piv_delete_fid(EF_PIV_BITGT);
     piv_delete_fid(EF_PIV_KEY_ATTESTATION);
+    /* The shared PW_PRIV file is intentionally not deleted; reset only the
+       PIV PIN/PUK retry bytes (indices 7/8 in the 9-byte layout). */
+    if (file_get_size(pw_status) == 9) {
+        uint8_t retries[9];
+        memcpy(retries, file_get_data(pw_status), sizeof(retries));
+        retries[3 + (EF_PIV_PIN & 0xf)] = 3;
+        retries[3 + (EF_PIV_PUK & 0xf)] = 3;
+        file_put_data(pw_status, retries, sizeof(retries));
+    }
     flash_commit();
     init_piv();
     return SW_OK();
@@ -1479,6 +1519,9 @@ static int cmd_import_asym(void) {
     uint8_t def_pinpol = PINPOLICY_ONCE;
     if (key_ref == EF_PIV_KEY_SIGNATURE) {
         def_pinpol = PINPOLICY_ALWAYS;
+    }
+    else if (key_ref == EF_PIV_KEY_CARDAUTH) {
+        def_pinpol = PINPOLICY_NEVER;
     }
     uint8_t meta[] = { algo,  asn1_len(&aaa) ? aaa.data[0] : def_pinpol, asn1_len(&aab) ? aab.data[0] : TOUCHPOLICY_ALWAYS, ORIGIN_IMPORTED };
     meta_add(key_ref, meta, sizeof(meta));
