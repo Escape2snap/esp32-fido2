@@ -271,7 +271,13 @@ void init_piv(void) {
     // cmd_select();
 }
 
+extern bool has_mgm;
+extern bool has_challenge;
+
 static int piv_unload(void) {
+    has_mgm = false;
+    has_challenge = false;
+    has_pwpiv = false;
     return PICOKEYS_OK;
 }
 
@@ -308,10 +314,14 @@ static void select_piv_aid(void) {
 }
 
 static int piv_select_aid(app_t *a, uint8_t force) {
-    (void) force;
     a->process_apdu = piv_process_apdu;
     a->unload = piv_unload;
-    init_piv();
+    /* SP 800-73-4 Part 2 3.1.1: re-SELECT of the already-active AID must not
+       change the security status. init_piv() clears has_pwpiv; only run it on
+       a real applet switch. */
+    if (force) {
+        init_piv();
+    }
     select_piv_aid();
     return PICOKEYS_OK;
 }
@@ -417,6 +427,16 @@ static int cmd_piv_get_data(void) {
             int (*file_data_func)(const file_t *) = NULL;
             memcpy(&file_data_func, &ef->data, sizeof(file_data_func));
             data_len = file_data_func(ef);
+            if (data_len == 0) {
+                return SW_FILE_NOT_FOUND();
+            }
+            if (apdu.rdata_cap != 0 && (uint32_t)data_len + 2 > apdu.rdata_cap) {
+                return SW_FILE_FULL();
+            }
+            /* These callbacks already emit their complete TLV (for example
+               Discovery is 7E 12 ...). Wrapping them in 53 corrupts the tag. */
+            res_APDU_size = data_len;
+            return SW_OK();
         }
         else {
             if (ef->data) {
@@ -732,7 +752,7 @@ static int cmd_authenticate(void) {
                     mbedtls_rsa_free(&ctx);
                     return SW_EXEC_ERROR();
                 }
-                size_t olen = file_get_size(ef_key);
+                size_t olen = mbedtls_rsa_get_len(&ctx);
                 if (algo == PIV_ALGO_RSA1024) {
                     memcpy(res_APDU, "\x7C\x81\x00\x82\x81\x00", 6);
                     res_APDU_size = 6;
