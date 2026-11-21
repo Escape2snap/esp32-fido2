@@ -874,6 +874,12 @@ static int cmd_authenticate(void) {
             if (memcmp(res_APDU, challenge, chal_len) != 0) {
                 return SW_DATA_INVALID();
             }
+            /* OpenSC uses a81 (challenge) + a82 (response) for external
+               authentication. The old code only set this in the a80 branch,
+               so a successful 9B login returned 9000 but the following
+               GENERATE was rejected with 69 82. */
+            has_mgm = true;
+            printf("PIV auth: has_mgm=1 (a82)\r\n");
         }
     }
     if (meta[1] == PINPOLICY_ALWAYS) {
