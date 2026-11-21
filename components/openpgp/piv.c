@@ -717,10 +717,23 @@ static int cmd_authenticate(void) {
     if (!asn1_find_tag(&ctxi, 0x7C, &a7c) || asn1_len(&ctxi) == 0) {
         return SW_INCORRECT_PARAMS();
     }
-    asn1_ctx_t a80 = { 0 }, a81 = { 0 }, a82 = { 0 };
+    asn1_ctx_t a80 = { 0 }, a81 = { 0 }, a82 = { 0 }, a85 = { 0 };
     asn1_find_tag(&a7c, 0x80, &a80);
     asn1_find_tag(&a7c, 0x81, &a81);
     asn1_find_tag(&a7c, 0x82, &a82);
+    asn1_find_tag(&a7c, 0x85, &a85);
+    if (a85.data) {
+        /* Key establishment is only defined for 9D/retired keys.  The ECDH
+           operation itself is not implemented yet; return 6A81 instead of a
+           silent 9000 empty response. */
+        if (key_ref != EF_PIV_KEY_KEYMGM && !IS_RETIRED(key_ref)) {
+            return SW_INCORRECT_PARAMS();
+        }
+        return SW_FUNC_NOT_SUPPORTED();
+    }
+    if (!a80.data && !a81.data && !a82.data) {
+        return SW_INCORRECT_PARAMS();
+    }
     if (a80.data) {
         if (a80.len == 0) {
             memcpy(challenge, random_bytes_get(sizeof(challenge)), sizeof(challenge));
