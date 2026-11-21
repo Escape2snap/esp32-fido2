@@ -737,9 +737,9 @@ static int cmd_authenticate(void) {
                     return SW_MEMORY_FAILURE();
                 }
                 res_APDU[res_APDU_size++] = 0x7C;
-                res_APDU[res_APDU_size++] = 18;
+                res_APDU[res_APDU_size++] = chal_len + 2;
                 res_APDU[res_APDU_size++] = 0x80;
-                res_APDU[res_APDU_size++] = 16;
+                res_APDU[res_APDU_size++] = chal_len;
                 int r = 0;
                 if (algo == PIV_ALGO_3DES) {
                     mbedtls_des3_context ctx;
@@ -751,7 +751,7 @@ static int cmd_authenticate(void) {
                         return SW_EXEC_ERROR();
                     }
                     r = mbedtls_des3_crypt_ecb(&ctx, challenge, res_APDU + res_APDU_size);
-                    res_APDU_size += 8;
+                    res_APDU_size += chal_len;
                     mbedtls_des3_free(&ctx);
                 }
                 else {
@@ -764,7 +764,7 @@ static int cmd_authenticate(void) {
                         return SW_EXEC_ERROR();
                     }
                     r = mbedtls_aes_crypt_ecb(&ctx, MBEDTLS_AES_ENCRYPT, challenge, res_APDU + res_APDU_size);
-                    res_APDU_size += 16;
+                    res_APDU_size += chal_len;
                     mbedtls_aes_free(&ctx);
                 }
                 if (r != 0) {
@@ -861,43 +861,55 @@ static int cmd_authenticate(void) {
                 }
             }
             else if (algo == PIV_ALGO_AES128 || algo == PIV_ALGO_AES192 || algo == PIV_ALGO_AES256 || algo == PIV_ALGO_3DES) {
-                uint16_t key_len = file_get_size(ef_key);
-                memcpy(res_APDU, "\x7C\x12\x82\x10", 4);
+                if (!has_challenge || key_ref != EF_PIV_KEY_CARDMGM) {
+                    return SW_INCORRECT_PARAMS();
+                }
+                uint8_t mgm[32];
+                size_t mgm_len = 0;
+                if (piv_mgm_load(mgm, sizeof(mgm), &mgm_len) != PICOKEYS_OK) {
+                    return SW_MEMORY_FAILURE();
+                }
+                if ((algo == PIV_ALGO_3DES && a81.len % 8 != 0) ||
+                    (algo != PIV_ALGO_3DES && a81.len % 16 != 0)) {
+                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
+                    return SW_DATA_INVALID();
+                }
+                res_APDU[0] = 0x7C;
+                res_APDU[1] = (uint8_t) (a81.len + 2);
+                res_APDU[2] = 0x82;
+                res_APDU[3] = (uint8_t) a81.len;
                 res_APDU_size = 4;
                 int r = 0;
                 if (algo == PIV_ALGO_3DES) {
-                    if (a81.len % 8 != 0) {
-                        return SW_DATA_INVALID();
-                    }
                     mbedtls_des3_context ctx;
                     mbedtls_des3_init(&ctx);
-                    r = mbedtls_des3_set3key_enc(&ctx, file_get_data(ef_key));
+                    r = mbedtls_des3_set3key_enc(&ctx, mgm);
+                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
                     if (r != 0) {
                         mbedtls_des3_free(&ctx);
                         return SW_EXEC_ERROR();
                     }
                     r = mbedtls_des3_crypt_ecb(&ctx, a81.data, res_APDU + res_APDU_size);
                     mbedtls_des3_free(&ctx);
-                    res_APDU_size += 8;
                 }
                 else {
-                    if (a81.len % 16 != 0) {
-                        return SW_DATA_INVALID();
-                    }
                     mbedtls_aes_context ctx;
                     mbedtls_aes_init(&ctx);
-                    r = mbedtls_aes_setkey_enc(&ctx, file_get_data(ef_key), key_len * 8);
+                    r = mbedtls_aes_setkey_enc(&ctx, mgm, mgm_len * 8);
+                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
                     if (r != 0) {
                         mbedtls_aes_free(&ctx);
                         return SW_EXEC_ERROR();
                     }
                     r = mbedtls_aes_crypt_ecb(&ctx, MBEDTLS_AES_ENCRYPT, a81.data, res_APDU + res_APDU_size);
                     mbedtls_aes_free(&ctx);
-                    res_APDU_size += 16;
                 }
                 if (r != 0) {
                     return SW_EXEC_ERROR();
                 }
+                res_APDU_size += a81.len;
+                has_challenge = false;
+                mbedtls_platform_zeroize(challenge, sizeof(challenge));
             }
         }
     }
