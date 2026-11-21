@@ -326,24 +326,33 @@ static void select_piv_aid(void) {
     res_APDU[res_APDU_size++] = 6;
     memcpy(res_APDU + res_APDU_size, "\x00\x00\x10\x00\x01\x00", 6);
     res_APDU_size += 6;
+    /* 79 carries the AID prefix as a nested 4F, not the raw 9-byte AID. */
     res_APDU[res_APDU_size++] = 0x79;
-    res_APDU[res_APDU_size++] = 9;
-    memcpy(res_APDU + res_APDU_size, "\xA0\x00\x00\x03\x08\x00\x00\x10\x00", 9);
-    res_APDU_size += 9;
+    res_APDU[res_APDU_size++] = 7;
+    res_APDU[res_APDU_size++] = 0x4F;
+    res_APDU[res_APDU_size++] = 5;
+    memcpy(res_APDU + res_APDU_size, "\xA0\x00\x00\x03\x08", 5);
+    res_APDU_size += 5;
     const char *app_label = "Pico Keys PIV";
     res_APDU[res_APDU_size++] = 0x50;
     res_APDU[res_APDU_size++] = strlen(app_label);
     memcpy(res_APDU + res_APDU_size, app_label, strlen(app_label));
 
+    /* One 80 01 <alg> per supported algorithm; do not advertise SM/2E. */
     res_APDU[res_APDU_size++] = 0xAC;
     res_APDU[res_APDU_size++] = 12;
     res_APDU[res_APDU_size++] = 0x80;
-    res_APDU[res_APDU_size++] = 7;
-    memcpy(res_APDU + res_APDU_size, "\x07\x08\x0A\x0C\x11\x14\x2E", 7);
-    res_APDU_size += 7;
-    res_APDU[res_APDU_size++] = 0x6;
     res_APDU[res_APDU_size++] = 1;
-    res_APDU[res_APDU_size++] = 0x00;
+    res_APDU[res_APDU_size++] = 0x06;
+    res_APDU[res_APDU_size++] = 0x80;
+    res_APDU[res_APDU_size++] = 1;
+    res_APDU[res_APDU_size++] = 0x07;
+    res_APDU[res_APDU_size++] = 0x80;
+    res_APDU[res_APDU_size++] = 1;
+    res_APDU[res_APDU_size++] = 0x11;
+    res_APDU[res_APDU_size++] = 0x80;
+    res_APDU[res_APDU_size++] = 1;
+    res_APDU[res_APDU_size++] = 0x14;
     res_APDU[fci_len_off] = (uint8_t) (res_APDU_size - 2);
 }
 
