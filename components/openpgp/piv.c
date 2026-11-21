@@ -199,7 +199,7 @@ static void scan_files_piv(void) {
     bool reset_dek = false;
     if ((ef = file_search_by_fid(EF_DEK_PWPIV, NULL, SPECIFY_ANY)) && !file_has_data(ef)) {
         printf("DEK PIV is empty or older\r\n");
-        const uint8_t defpin[8] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36 };
+        const uint8_t defpin[6] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36 };
         const uint8_t *random_dek = random_bytes_get(IV_SIZE + 32);
 
         uint8_t def[DEK_FILE_SIZE];
@@ -224,7 +224,7 @@ static void scan_files_piv(void) {
     if ((ef = file_search_by_fid(EF_PIV_PIN, NULL, SPECIFY_ANY))) {
         if (!ef->data || reset_dek) {
             printf("PIV PIN is empty. Initializing with default password\r\n");
-            const uint8_t def[8] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0xFF, 0xFF };
+            const uint8_t def[6] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36 };
             uint8_t dhash[34];
             dhash[0] = sizeof(def);
             dhash[1] = 0x1; // Format
