@@ -1311,7 +1311,14 @@ static int cmd_piv_change_pin(void) {
     if (!ef) {
         return SW_MEMORY_FAILURE();
     }
-    uint8_t *pin_data = file_get_data(ef), pin_len = apdu.nc - pin_data[0];
+    uint8_t *pin_data = file_get_data(ef);
+    if (apdu.nc < pin_data[0]) {
+        return SW_WRONG_LENGTH();
+    }
+    uint8_t pin_len = (uint8_t) (apdu.nc - pin_data[0]);
+    if (pin_len < 6 || pin_len > 8) {
+        return SW_INCORRECT_PARAMS();
+    }
     uint16_t ret = check_pin(ef, apdu.data, pin_data[0]);
     if (ret != 0x9000) {
         return ret;
@@ -1334,7 +1341,14 @@ static int cmd_piv_reset_retry(void) {
     if (!ef) {
         return SW_MEMORY_FAILURE();
     }
-    uint8_t *puk_data = file_get_data(ef), pin_len = apdu.nc - puk_data[0];
+    uint8_t *puk_data = file_get_data(ef);
+    if (apdu.nc < puk_data[0]) {
+        return SW_WRONG_LENGTH();
+    }
+    uint8_t pin_len = (uint8_t) (apdu.nc - puk_data[0]);
+    if (pin_len < 6 || pin_len > 8) {
+        return SW_INCORRECT_PARAMS();
+    }
     uint16_t ret = check_pin(ef, apdu.data, puk_data[0]);
     if (ret != 0x9000) {
         return ret;
