@@ -1376,6 +1376,9 @@ static int cmd_set_retries(void) {
     if (!has_mgm) {
         return SW_SECURITY_STATUS_NOT_SATISFIED();
     }
+    if (P1(apdu) == 0 || P2(apdu) == 0) {
+        return SW_INCORRECT_PARAMS();
+    }
     file_t *ef = file_search_by_fid(EF_PW_RETRIES, NULL, SPECIFY_ANY);
     if (!ef || file_get_size(ef) < 6) {
         return SW_MEMORY_FAILURE();
@@ -1389,6 +1392,32 @@ static int cmd_set_retries(void) {
     tmp[5] = P2(apdu);
     file_put_data(ef, tmp, file_get_size(ef));
     free(tmp);
+
+    /* Yubico SET PIN RETRIES also resets the PIN/PUK reference data to the
+       factory defaults.  Use the same 6-byte PIN default as provisioning. */
+    ef = file_search_by_fid(EF_PIV_PIN, NULL, SPECIFY_ANY);
+    if (!ef) {
+        return SW_MEMORY_FAILURE();
+    }
+    const uint8_t def_pin[6] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36 };
+    uint8_t dhash[34];
+    dhash[0] = sizeof(def_pin);
+    dhash[1] = 0x1;
+    pin_derive_verifier(def_pin, sizeof(def_pin), dhash + 2);
+    file_put_data(ef, dhash, sizeof(dhash));
+    pin_reset_retries(ef, true);
+
+    ef = file_search_by_fid(EF_PIV_PUK, NULL, SPECIFY_ANY);
+    if (!ef) {
+        return SW_MEMORY_FAILURE();
+    }
+    const uint8_t def_puk[8] = {0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38};
+    dhash[0] = sizeof(def_puk);
+    dhash[1] = 0x1;
+    pin_derive_verifier(def_puk, sizeof(def_puk), dhash + 2);
+    file_put_data(ef, dhash, sizeof(dhash));
+    pin_reset_retries(ef, true);
+
     flash_commit();
     return SW_OK();
 }
