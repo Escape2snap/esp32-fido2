@@ -337,6 +337,7 @@ static void select_piv_aid(void) {
     res_APDU[res_APDU_size++] = 0x50;
     res_APDU[res_APDU_size++] = strlen(app_label);
     memcpy(res_APDU + res_APDU_size, app_label, strlen(app_label));
+    res_APDU_size += strlen(app_label);
 
     /* One 80 01 <alg> per supported algorithm; do not advertise SM/2E. */
     res_APDU[res_APDU_size++] = 0xAC;
