@@ -165,6 +165,53 @@ static int x509_create_cert(void *pk_ctx, uint8_t algo, uint8_t slot, bool attes
     return ret;
 }
 
+static size_t piv_build_chuid(uint8_t *buf, size_t cap) {
+    if (cap < 64) {
+        return 0;
+    }
+    /* PIV-I style placeholder. Only the GUID is unique; the FASC-N,
+       expiration and 3E signature are issuer provisioning data. This makes
+       OpenSC serial work, but it is not a production PACS credential. */
+    static const uint8_t fascn[25] = {
+        0xD4, 0xE7, 0x39, 0xDA, 0x73, 0x9C, 0xED, 0x39, 0xCE, 0x73,
+        0x9D, 0x83, 0x60, 0xD8, 0x21, 0x08, 0x42, 0x10, 0x84, 0x21,
+        0x08, 0x42, 0x10, 0x87, 0xF3
+    };
+
+    /* Random UUID generated once at provisioning and stored in the CHUID.
+       It is stable for the lifetime of the CHUID, but not predictable from
+       the device serial number. */
+    uint8_t guid[16];
+    memcpy(guid, random_bytes_get(sizeof(guid)), sizeof(guid));
+    guid[6] = (uint8_t) ((guid[6] & 0x0F) | 0x40); /* UUID version 4 */
+    guid[8] = (uint8_t) ((guid[8] & 0x3F) | 0x80); /* RFC 4122 variant */
+
+    /* Expiration is ASCII YYYYMMDD per SP 800-73-4. */
+    const uint8_t expiration[8] = {
+        '2', '0', '7', '4', '1', '2', '3', '1'
+    };
+
+    size_t n = 0;
+    buf[n++] = 0x30;
+    buf[n++] = 25;
+    memcpy(buf + n, fascn, sizeof(fascn));
+    n += sizeof(fascn);
+    buf[n++] = 0x34;
+    buf[n++] = 16;
+    memcpy(buf + n, guid, sizeof(guid));
+    n += sizeof(guid);
+    buf[n++] = 0x35;
+    buf[n++] = 8;
+    memcpy(buf + n, expiration, sizeof(expiration));
+    n += sizeof(expiration);
+    /* Empty issuer signature/LRC placeholders; issuers must replace these
+       with a real 3E signature for a production PACS. */
+    buf[n++] = 0x3E;
+    buf[n++] = 0x00;
+    buf[n++] = 0xFE;
+    buf[n++] = 0x00;
+    return n;
+}
 static void scan_files_piv(void) {
     file_scan_flash();
     file_t *ef = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_EF);
@@ -262,6 +309,16 @@ static void scan_files_piv(void) {
         const uint8_t ccc[] = { 0xF0, 0x00, 0xF1, 0x00, 0xF2, 0x00,
                                 0xF3, 0x00, 0xF4, 0x00, 0xF5, 0x01, 0x10 };
         file_put_data(ef, ccc, sizeof(ccc));
+    }
+    /* P1-5: OpenSC-readable CHUID placeholder with a random persisted GUID
+       and PIV-I style FASC-N. Issuers must replace the FASC-N, expiration and
+       3E signature through PUT DATA for production PACS use. */
+    if ((ef = file_search_by_fid(EF_PIV_CHUID, NULL, SPECIFY_ANY)) && !file_has_data(ef)) {
+        uint8_t chuid[64];
+        size_t chuid_len = piv_build_chuid(chuid, sizeof(chuid));
+        if (chuid_len > 0) {
+            file_put_data(ef, chuid, (uint16_t) chuid_len);
+        }
     }
     piv_protect_legacy_keys();
     piv_mgm_migrate();
