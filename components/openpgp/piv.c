@@ -408,6 +408,18 @@ static int cmd_get_serial(void) {
     return SW_OK();
 }
 
+static bool piv_pin_digits(const uint8_t *pin, size_t len) {
+    if (len < 6 || len > 8) {
+        return false;
+    }
+    for (size_t i = 0; i < len; i++) {
+        if (pin[i] < '0' || pin[i] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
 static int cmd_piv_verify(void) {
     uint8_t key_ref = P2(apdu);
     if (P1(apdu) != 0x00 && P1(apdu) != 0xFF) {
@@ -434,6 +446,10 @@ static int cmd_piv_verify(void) {
         return SW_OK();
     }
     if (apdu.nc > 0) {
+        bool legacy_padded = (apdu.nc == 8 && apdu.data[6] == 0xFF && apdu.data[7] == 0xFF);
+        if (!piv_pin_digits(apdu.data, apdu.nc) && !legacy_padded) {
+            return SW_INCORRECT_PARAMS();
+        }
         uint16_t ret = check_pin(pw, apdu.data, apdu.nc);
         if (ret == 0x9000) {
             has_pwpiv = true;
@@ -1319,7 +1335,7 @@ static int cmd_piv_change_pin(void) {
         return SW_WRONG_LENGTH();
     }
     uint8_t pin_len = (uint8_t) (apdu.nc - pin_data[0]);
-    if (pin_len < 6 || pin_len > 8) {
+    if (!piv_pin_digits(apdu.data + pin_data[0], pin_len)) {
         return SW_INCORRECT_PARAMS();
     }
     uint16_t ret = check_pin(ef, apdu.data, pin_data[0]);
@@ -1352,7 +1368,7 @@ static int cmd_piv_reset_retry(void) {
         return SW_WRONG_LENGTH();
     }
     uint8_t pin_len = (uint8_t) (apdu.nc - puk_data[0]);
-    if (pin_len < 6 || pin_len > 8) {
+    if (!piv_pin_digits(apdu.data + puk_data[0], pin_len)) {
         return SW_INCORRECT_PARAMS();
     }
     uint16_t ret = check_pin(ef, apdu.data, puk_data[0]);
