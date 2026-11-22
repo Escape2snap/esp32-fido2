@@ -40,6 +40,11 @@ extern uint8_t session_pw3[32];
 extern uint8_t dek[IV_SIZE + 32];
 
 extern int store_keys(void *key_ctx, int type, uint16_t key_id, bool use_kek);
+extern int store_keys_piv(void *key_ctx, int type, uint16_t key_id);
+extern int piv_protect_legacy_keys(void);
+extern int piv_mgm_load(uint8_t *key, size_t cap, size_t *key_len);
+extern int piv_mgm_store(const uint8_t *key, size_t key_len);
+extern int piv_mgm_migrate(void);
 extern void make_rsa_response(mbedtls_rsa_context *rsa);
 extern void make_ecdsa_response(mbedtls_ecdsa_context *ecdsa);
 extern int ecdsa_sign(mbedtls_ecdsa_context *ctx,

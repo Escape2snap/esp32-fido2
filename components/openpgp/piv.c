@@ -199,7 +199,7 @@ static void scan_files_piv(void) {
     bool reset_dek = false;
     if ((ef = file_search_by_fid(EF_DEK_PWPIV, NULL, SPECIFY_ANY)) && !file_has_data(ef)) {
         printf("DEK PIV is empty or older\r\n");
-        const uint8_t defpin[8] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36 };
+        const uint8_t defpin[6] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36 };
         const uint8_t *random_dek = random_bytes_get(IV_SIZE + 32);
 
         uint8_t def[DEK_FILE_SIZE];
@@ -212,7 +212,10 @@ static void scan_files_piv(void) {
 
         uint8_t *key = (uint8_t *)"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08";
         file_t *ef_cardmgm = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_ANY);
-        file_put_data(ef_cardmgm, key, 24);
+        if (piv_mgm_store(key, 24) != PICOKEYS_OK && ef_cardmgm) {
+            /* Last-resort provisioning path; the scan migration retries. */
+            file_put_data(ef_cardmgm, key, 24);
+        }
         uint8_t meta[] = { PIV_ALGO_AES192, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS };
         meta_add(EF_PIV_KEY_CARDMGM, meta, sizeof(meta));
 
@@ -221,7 +224,7 @@ static void scan_files_piv(void) {
     if ((ef = file_search_by_fid(EF_PIV_PIN, NULL, SPECIFY_ANY))) {
         if (!ef->data || reset_dek) {
             printf("PIV PIN is empty. Initializing with default password\r\n");
-            const uint8_t def[8] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0xFF, 0xFF };
+            const uint8_t def[6] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36 };
             uint8_t dhash[34];
             dhash[0] = sizeof(def);
             dhash[1] = 0x1; // Format
@@ -246,7 +249,7 @@ static void scan_files_piv(void) {
             mbedtls_ecdsa_context ecdsa;
             mbedtls_ecdsa_init(&ecdsa);
             int r = mbedtls_ecdsa_genkey(&ecdsa, MBEDTLS_ECP_DP_SECP384R1, random_fill_iterator, NULL);
-            r = store_keys(&ecdsa, ALGO_ECDSA, EF_PIV_KEY_ATTESTATION, false);
+            r = store_keys_piv(&ecdsa, ALGO_ECDSA, EF_PIV_KEY_ATTESTATION);
             uint8_t cert[2048];
             r = x509_create_cert(&ecdsa, PIV_ALGO_ECCP384, EF_PIV_KEY_ATTESTATION, false, cert, sizeof(cert));
             ef = file_search_by_fid(EF_PIV_ATTESTATION, NULL, SPECIFY_ANY);
@@ -254,7 +257,46 @@ static void scan_files_piv(void) {
             mbedtls_ecdsa_free(&ecdsa);
         }
     }
+    /* P1-4: minimal Card Capability Container (GET DATA wraps it in 53). */
+    if ((ef = file_search_by_fid(EF_PIV_CAPABILITY, NULL, SPECIFY_ANY)) && !file_has_data(ef)) {
+        const uint8_t ccc[] = { 0xF0, 0x00, 0xF1, 0x00, 0xF2, 0x00,
+                                0xF3, 0x00, 0xF4, 0x00, 0xF5, 0x01, 0x10 };
+        file_put_data(ef, ccc, sizeof(ccc));
+    }
+    piv_protect_legacy_keys();
+    piv_mgm_migrate();
     flash_commit();
+}
+
+/* P1-6: PIV certificate objects are 70 {DER} 71 {info} FE {LRC}. */
+static int piv_store_cert(file_t *ef, const uint8_t *der, size_t der_len) {
+    if (!ef || !der || der_len == 0 || der_len > 2048) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    uint8_t wrapped[2048 + 16];
+    size_t n = 0;
+    wrapped[n++] = 0x70;
+    if (der_len < 0x80) {
+        wrapped[n++] = (uint8_t) der_len;
+    }
+    else if (der_len <= 0xFF) {
+        wrapped[n++] = 0x81;
+        wrapped[n++] = (uint8_t) der_len;
+    }
+    else {
+        wrapped[n++] = 0x82;
+        wrapped[n++] = (uint8_t) (der_len >> 8);
+        wrapped[n++] = (uint8_t) (der_len & 0xFF);
+    }
+    memcpy(wrapped + n, der, der_len);
+    n += der_len;
+    wrapped[n++] = 0x71;
+    wrapped[n++] = 0x01;
+    wrapped[n++] = 0x00;
+    wrapped[n++] = 0xFE;
+    wrapped[n++] = 0x01;
+    wrapped[n++] = 0x00;
+    return file_put_data(ef, wrapped, (uint16_t) n);
 }
 
 void init_piv(void) {
@@ -263,42 +305,67 @@ void init_piv(void) {
     // cmd_select();
 }
 
+extern bool has_mgm;
+extern bool has_challenge;
+
 static int piv_unload(void) {
+    has_mgm = false;
+    has_challenge = false;
+    has_pwpiv = false;
     return PICOKEYS_OK;
 }
 
 static void select_piv_aid(void) {
     res_APDU[res_APDU_size++] = 0x61;
-    res_APDU[res_APDU_size++] = 0; //filled later
+    uint16_t fci_len_off = res_APDU_size;
+    res_APDU[res_APDU_size++] = 0; //filled at the end
+    /* 800-73-4: 4F carries the PIX (the part after the 5-byte RID),
+       not a two-byte placeholder. OpenSC's PIV driver matches this to
+       piv_aids[] and rejects the card otherwise. */
     res_APDU[res_APDU_size++] = 0x4F;
-    res_APDU[res_APDU_size++] = 2;
-    res_APDU[res_APDU_size++] = 0x01;
-    res_APDU[res_APDU_size++] = 0x00;
+    res_APDU[res_APDU_size++] = 6;
+    memcpy(res_APDU + res_APDU_size, "\x00\x00\x10\x00\x01\x00", 6);
+    res_APDU_size += 6;
+    /* 79 carries the AID prefix as a nested 4F, not the raw 9-byte AID. */
     res_APDU[res_APDU_size++] = 0x79;
-    res_APDU[res_APDU_size++] = 9;
-    memcpy(res_APDU + res_APDU_size, "\xA0\x00\x00\x03\x08\x00\x00\x10\x00", 9);
-    res_APDU_size += 9;
+    res_APDU[res_APDU_size++] = 7;
+    res_APDU[res_APDU_size++] = 0x4F;
+    res_APDU[res_APDU_size++] = 5;
+    memcpy(res_APDU + res_APDU_size, "\xA0\x00\x00\x03\x08", 5);
+    res_APDU_size += 5;
     const char *app_label = "Pico Keys PIV";
     res_APDU[res_APDU_size++] = 0x50;
     res_APDU[res_APDU_size++] = strlen(app_label);
     memcpy(res_APDU + res_APDU_size, app_label, strlen(app_label));
+    res_APDU_size += strlen(app_label);
 
+    /* One 80 01 <alg> per supported algorithm; do not advertise SM/2E. */
     res_APDU[res_APDU_size++] = 0xAC;
     res_APDU[res_APDU_size++] = 12;
     res_APDU[res_APDU_size++] = 0x80;
-    res_APDU[res_APDU_size++] = 7;
-    memcpy(res_APDU + res_APDU_size, "\x07\x08\x0A\x0C\x11\x14\x2E", 7);
-    res_APDU_size += 7;
-    res_APDU[res_APDU_size++] = 0x6;
     res_APDU[res_APDU_size++] = 1;
-    res_APDU[res_APDU_size++] = 0x00;
+    res_APDU[res_APDU_size++] = 0x06;
+    res_APDU[res_APDU_size++] = 0x80;
+    res_APDU[res_APDU_size++] = 1;
+    res_APDU[res_APDU_size++] = 0x07;
+    res_APDU[res_APDU_size++] = 0x80;
+    res_APDU[res_APDU_size++] = 1;
+    res_APDU[res_APDU_size++] = 0x11;
+    res_APDU[res_APDU_size++] = 0x80;
+    res_APDU[res_APDU_size++] = 1;
+    res_APDU[res_APDU_size++] = 0x14;
+    res_APDU[fci_len_off] = (uint8_t) (res_APDU_size - 2);
 }
 
 static int piv_select_aid(app_t *a, uint8_t force) {
-    (void) force;
     a->process_apdu = piv_process_apdu;
     a->unload = piv_unload;
-    init_piv();
+    /* SP 800-73-4 Part 2 3.1.1: re-SELECT of the already-active AID must not
+       change the security status. init_piv() clears has_pwpiv; only run it on
+       a real applet switch. */
+    if (force) {
+        init_piv();
+    }
     select_piv_aid();
     return PICOKEYS_OK;
 }
@@ -341,6 +408,18 @@ static int cmd_get_serial(void) {
     return SW_OK();
 }
 
+static bool piv_pin_digits(const uint8_t *pin, size_t len) {
+    if (len < 6 || len > 8) {
+        return false;
+    }
+    for (size_t i = 0; i < len; i++) {
+        if (pin[i] < '0' || pin[i] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
 static int cmd_piv_verify(void) {
     uint8_t key_ref = P2(apdu);
     if (P1(apdu) != 0x00 && P1(apdu) != 0xFF) {
@@ -360,11 +439,22 @@ static int cmd_piv_verify(void) {
     if (file_get_data(pw)[0] == 0) { //not initialized
         return SW_REFERENCE_NOT_FOUND();
     }
+    if (P1(apdu) == 0xFF && apdu.nc == 0) {
+        /* PIV Part 2 3.2.1: VERIFY P1=FF resets the PIN security status. */
+        has_pwpiv = false;
+        mbedtls_platform_zeroize(session_pwpiv, sizeof(session_pwpiv));
+        return SW_OK();
+    }
     if (apdu.nc > 0) {
+        bool legacy_padded = (apdu.nc == 8 && apdu.data[6] == 0xFF && apdu.data[7] == 0xFF);
+        if (!piv_pin_digits(apdu.data, apdu.nc) && !legacy_padded) {
+            return SW_INCORRECT_PARAMS();
+        }
         uint16_t ret = check_pin(pw, apdu.data, apdu.nc);
         if (ret == 0x9000) {
             has_pwpiv = true;
-            hash_multi(apdu.data, apdu.nc, session_pwpiv);
+            /* Must match the KDF used when EF_DEK_PWPIV was provisioned. */
+            pin_derive_session(apdu.data, apdu.nc, session_pwpiv);
         }
         return ret; //SW already set
     }
@@ -386,7 +476,7 @@ static int cmd_piv_get_data(void) {
         return SW_INCORRECT_P1P2();
     }
     if (apdu.data[0] != 0x5C || (apdu.data[1] & 0x80) || apdu.data[1] >= 4 || apdu.data[1] == 0) {
-        return SW_WRONG_DATA();
+        return SW_INCORRECT_PARAMS();
     }
     uint32_t fid = apdu.data[2];
     for (uint8_t lt = 1; lt < apdu.data[1]; lt++) {
@@ -404,6 +494,16 @@ static int cmd_piv_get_data(void) {
             int (*file_data_func)(const file_t *) = NULL;
             memcpy(&file_data_func, &ef->data, sizeof(file_data_func));
             data_len = file_data_func(ef);
+            if (data_len == 0) {
+                return SW_FILE_NOT_FOUND();
+            }
+            if (apdu.rdata_cap != 0 && (uint32_t)data_len + 2 > apdu.rdata_cap) {
+                return SW_FILE_FULL();
+            }
+            /* These callbacks already emit their complete TLV (for example
+               Discovery is 7E 12 ...). Wrapping them in 53 corrupts the tag. */
+            res_APDU_size = data_len;
+            return SW_OK();
         }
         else {
             if (ef->data) {
@@ -543,7 +643,13 @@ static int cmd_get_metadata(void) {
         }
         else if (key_ref == EF_PIV_KEY_CARDMGM) {
             pin_derive_verifier((const uint8_t *)"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08", 24, dhash);
-            eq = memcmp(dhash, file_get_data(ef_key), file_get_size(ef_key));
+            uint8_t mgm[32];
+            size_t mgm_len = 0;
+            eq = 1;
+            if (piv_mgm_load(mgm, sizeof(mgm), &mgm_len) == PICOKEYS_OK) {
+                eq = memcmp(dhash, mgm, mgm_len);
+            }
+            mbedtls_platform_zeroize(mgm, sizeof(mgm));
         }
         res_APDU[res_APDU_size++] = 0x5;
         res_APDU[res_APDU_size++] = 1;
@@ -575,7 +681,7 @@ static int cmd_authenticate(void) {
         return SW_WRONG_LENGTH();
     }
     if (apdu.data[0] != 0x7C) {
-        return SW_WRONG_DATA();
+        return SW_INCORRECT_PARAMS();
     }
     if (key_ref == EF_PIV_KEY_CARDMGM) {
         if (algo != PIV_ALGO_AES128 && algo != PIV_ALGO_AES192 && algo != PIV_ALGO_AES256 && algo != PIV_ALGO_3DES) {
@@ -585,7 +691,12 @@ static int cmd_authenticate(void) {
         if (!file_has_data(ef_mgm)) {
             return SW_MEMORY_FAILURE();
         }
-        uint16_t mgm_len = file_get_size(ef_mgm);
+        uint8_t mgm[32];
+        size_t mgm_len = 0;
+        if (piv_mgm_load(mgm, sizeof(mgm), &mgm_len) != PICOKEYS_OK) {
+            return SW_MEMORY_FAILURE();
+        }
+        mbedtls_platform_zeroize(mgm, sizeof(mgm));
         if ((algo == PIV_ALGO_AES128 && mgm_len != 16) || (algo == PIV_ALGO_AES192 && mgm_len != 24) || (algo == PIV_ALGO_AES256 && mgm_len != 32) || (algo == PIV_ALGO_3DES && mgm_len != 24)) {
             return SW_INCORRECT_P1P2();
         }
@@ -598,23 +709,47 @@ static int cmd_authenticate(void) {
     if (meta[1] == PINPOLICY_DEFAULT) {
         uint8_t new_meta[4];
         memcpy(new_meta, meta, meta_len > 4 ? 4 : meta_len);
-        new_meta[1] = (key_ref == EF_PIV_KEY_SIGNATURE) ? PINPOLICY_ALWAYS : PINPOLICY_ONCE;
+        if (key_ref == EF_PIV_KEY_SIGNATURE) {
+            new_meta[1] = PINPOLICY_ALWAYS;
+        }
+        else if (key_ref == EF_PIV_KEY_CARDAUTH) {
+            new_meta[1] = PINPOLICY_NEVER;
+        }
+        else {
+            new_meta[1] = PINPOLICY_ONCE;
+        }
         meta_add(key_ref, new_meta, sizeof(new_meta));
         meta_find(key_ref, &meta); // re-fetch updated meta
     }
-    if ((meta[1] == PINPOLICY_ALWAYS || meta[1] == PINPOLICY_ONCE) && (!has_pwpiv && (key_ref == EF_PIV_KEY_AUTHENTICATION || key_ref == EF_PIV_KEY_SIGNATURE || key_ref == EF_PIV_KEY_KEYMGM || key_ref == EF_PIV_KEY_CARDAUTH || IS_RETIRED(key_ref)))) {
+    /* 9E Card Authentication is always available (NIST Table 4b). */
+    if (key_ref != EF_PIV_KEY_CARDAUTH &&
+        (meta[1] == PINPOLICY_ALWAYS || meta[1] == PINPOLICY_ONCE) &&
+        (!has_pwpiv && (key_ref == EF_PIV_KEY_AUTHENTICATION || key_ref == EF_PIV_KEY_SIGNATURE || key_ref == EF_PIV_KEY_KEYMGM || IS_RETIRED(key_ref)))) {
         return SW_SECURITY_STATUS_NOT_SATISFIED();
     }
     uint8_t chal_len = (algo == PIV_ALGO_3DES ? sizeof(challenge) / 2 : sizeof(challenge));
     asn1_ctx_t ctxi, a7c = { 0 };
     asn1_ctx_init(apdu.data, (uint16_t)apdu.nc, &ctxi);
     if (!asn1_find_tag(&ctxi, 0x7C, &a7c) || asn1_len(&ctxi) == 0) {
-        return SW_WRONG_DATA();
+        return SW_INCORRECT_PARAMS();
     }
-    asn1_ctx_t a80 = { 0 }, a81 = { 0 }, a82 = { 0 };
+    asn1_ctx_t a80 = { 0 }, a81 = { 0 }, a82 = { 0 }, a85 = { 0 };
     asn1_find_tag(&a7c, 0x80, &a80);
     asn1_find_tag(&a7c, 0x81, &a81);
     asn1_find_tag(&a7c, 0x82, &a82);
+    asn1_find_tag(&a7c, 0x85, &a85);
+    if (a85.data) {
+        /* Key establishment is only defined for 9D/retired keys.  The ECDH
+           operation itself is not implemented yet; return 6A81 instead of a
+           silent 9000 empty response. */
+        if (key_ref != EF_PIV_KEY_KEYMGM && !IS_RETIRED(key_ref)) {
+            return SW_INCORRECT_PARAMS();
+        }
+        return SW_FUNC_NOT_SUPPORTED();
+    }
+    if (!a80.data && !a81.data && !a82.data) {
+        return SW_INCORRECT_PARAMS();
+    }
     if (a80.data) {
         if (a80.len == 0) {
             memcpy(challenge, random_bytes_get(sizeof(challenge)), sizeof(challenge));
@@ -626,34 +761,40 @@ static int cmd_authenticate(void) {
                 if (!file_has_data(ef_mgm)) {
                     return SW_MEMORY_FAILURE();
                 }
-                uint16_t mgm_len = file_get_size(ef_mgm);
+                uint8_t mgm[32];
+                size_t mgm_len = 0;
+                if (piv_mgm_load(mgm, sizeof(mgm), &mgm_len) != PICOKEYS_OK) {
+                    return SW_MEMORY_FAILURE();
+                }
                 res_APDU[res_APDU_size++] = 0x7C;
-                res_APDU[res_APDU_size++] = 18;
+                res_APDU[res_APDU_size++] = chal_len + 2;
                 res_APDU[res_APDU_size++] = 0x80;
-                res_APDU[res_APDU_size++] = 16;
+                res_APDU[res_APDU_size++] = chal_len;
                 int r = 0;
                 if (algo == PIV_ALGO_3DES) {
                     mbedtls_des3_context ctx;
                     mbedtls_des3_init(&ctx);
-                    r = mbedtls_des3_set3key_enc(&ctx, file_get_data(ef_mgm));
+                    r = mbedtls_des3_set3key_enc(&ctx, mgm);
+                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
                     if (r != 0) {
                         mbedtls_des3_free(&ctx);
                         return SW_EXEC_ERROR();
                     }
                     r = mbedtls_des3_crypt_ecb(&ctx, challenge, res_APDU + res_APDU_size);
-                    res_APDU_size += 8;
+                    res_APDU_size += chal_len;
                     mbedtls_des3_free(&ctx);
                 }
                 else {
                     mbedtls_aes_context ctx;
                     mbedtls_aes_init(&ctx);
-                    r = mbedtls_aes_setkey_enc(&ctx, file_get_data(ef_mgm), mgm_len * 8);
+                    r = mbedtls_aes_setkey_enc(&ctx, mgm, mgm_len * 8);
+                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
                     if (r != 0) {
                         mbedtls_aes_free(&ctx);
                         return SW_EXEC_ERROR();
                     }
                     r = mbedtls_aes_crypt_ecb(&ctx, MBEDTLS_AES_ENCRYPT, challenge, res_APDU + res_APDU_size);
-                    res_APDU_size += 16;
+                    res_APDU_size += chal_len;
                     mbedtls_aes_free(&ctx);
                 }
                 if (r != 0) {
@@ -673,6 +814,8 @@ static int cmd_authenticate(void) {
                 return SW_INCORRECT_P1P2();
             }
             if (memcmp(a80.data, challenge, a80.len) == 0) {
+                /* Keep the challenge until the a81 response has been
+                   encrypted; A.2 uses one challenge for both TLVs. */
                 has_mgm = true;
             }
         }
@@ -701,7 +844,7 @@ static int cmd_authenticate(void) {
                     mbedtls_rsa_free(&ctx);
                     return SW_EXEC_ERROR();
                 }
-                size_t olen = file_get_size(ef_key);
+                size_t olen = mbedtls_rsa_get_len(&ctx);
                 if (algo == PIV_ALGO_RSA1024) {
                     memcpy(res_APDU, "\x7C\x81\x00\x82\x81\x00", 6);
                     res_APDU_size = 6;
@@ -748,43 +891,55 @@ static int cmd_authenticate(void) {
                 }
             }
             else if (algo == PIV_ALGO_AES128 || algo == PIV_ALGO_AES192 || algo == PIV_ALGO_AES256 || algo == PIV_ALGO_3DES) {
-                uint16_t key_len = file_get_size(ef_key);
-                memcpy(res_APDU, "\x7C\x12\x82\x10", 4);
+                if (!has_challenge || key_ref != EF_PIV_KEY_CARDMGM) {
+                    return SW_INCORRECT_PARAMS();
+                }
+                uint8_t mgm[32];
+                size_t mgm_len = 0;
+                if (piv_mgm_load(mgm, sizeof(mgm), &mgm_len) != PICOKEYS_OK) {
+                    return SW_MEMORY_FAILURE();
+                }
+                if ((algo == PIV_ALGO_3DES && a81.len % 8 != 0) ||
+                    (algo != PIV_ALGO_3DES && a81.len % 16 != 0)) {
+                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
+                    return SW_DATA_INVALID();
+                }
+                res_APDU[0] = 0x7C;
+                res_APDU[1] = (uint8_t) (a81.len + 2);
+                res_APDU[2] = 0x82;
+                res_APDU[3] = (uint8_t) a81.len;
                 res_APDU_size = 4;
                 int r = 0;
                 if (algo == PIV_ALGO_3DES) {
-                    if (a81.len % 8 != 0) {
-                        return SW_DATA_INVALID();
-                    }
                     mbedtls_des3_context ctx;
                     mbedtls_des3_init(&ctx);
-                    r = mbedtls_des3_set3key_enc(&ctx, file_get_data(ef_key));
+                    r = mbedtls_des3_set3key_enc(&ctx, mgm);
+                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
                     if (r != 0) {
                         mbedtls_des3_free(&ctx);
                         return SW_EXEC_ERROR();
                     }
                     r = mbedtls_des3_crypt_ecb(&ctx, a81.data, res_APDU + res_APDU_size);
                     mbedtls_des3_free(&ctx);
-                    res_APDU_size += 8;
                 }
                 else {
-                    if (a81.len % 16 != 0) {
-                        return SW_DATA_INVALID();
-                    }
                     mbedtls_aes_context ctx;
                     mbedtls_aes_init(&ctx);
-                    r = mbedtls_aes_setkey_enc(&ctx, file_get_data(ef_key), key_len * 8);
+                    r = mbedtls_aes_setkey_enc(&ctx, mgm, mgm_len * 8);
+                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
                     if (r != 0) {
                         mbedtls_aes_free(&ctx);
                         return SW_EXEC_ERROR();
                     }
                     r = mbedtls_aes_crypt_ecb(&ctx, MBEDTLS_AES_ENCRYPT, a81.data, res_APDU + res_APDU_size);
                     mbedtls_aes_free(&ctx);
-                    res_APDU_size += 16;
                 }
                 if (r != 0) {
                     return SW_EXEC_ERROR();
                 }
+                res_APDU_size += a81.len;
+                has_challenge = false;
+                mbedtls_platform_zeroize(challenge, sizeof(challenge));
             }
         }
     }
@@ -806,13 +961,18 @@ static int cmd_authenticate(void) {
             if (!file_has_data(ef_key)) {
                 return SW_MEMORY_FAILURE();
             }
-            uint16_t key_len = file_get_size(ef_key);
+            uint8_t mgm[32];
+            size_t key_len = 0;
+            if (piv_mgm_load(mgm, sizeof(mgm), &key_len) != PICOKEYS_OK) {
+                return SW_MEMORY_FAILURE();
+            }
             int r = 0;
             if (algo == PIV_ALGO_3DES)
             {
                 mbedtls_des3_context ctx;
                 mbedtls_des3_init(&ctx);
-                r = mbedtls_des3_set3key_dec(&ctx, file_get_data(ef_key));
+                r = mbedtls_des3_set3key_dec(&ctx, mgm);
+                mbedtls_platform_zeroize(mgm, sizeof(mgm));
                 if (r != 0) {
                     mbedtls_des3_free(&ctx);
                     return SW_EXEC_ERROR();
@@ -823,7 +983,8 @@ static int cmd_authenticate(void) {
             else {
                 mbedtls_aes_context ctx;
                 mbedtls_aes_init(&ctx);
-                r = mbedtls_aes_setkey_dec(&ctx, file_get_data(ef_key), key_len * 8);
+                r = mbedtls_aes_setkey_dec(&ctx, mgm, key_len * 8);
+                mbedtls_platform_zeroize(mgm, sizeof(mgm));
                 if (r != 0) {
                     mbedtls_aes_free(&ctx);
                     return SW_EXEC_ERROR();
@@ -835,13 +996,23 @@ static int cmd_authenticate(void) {
                 return SW_EXEC_ERROR();
             }
             if (memcmp(res_APDU, challenge, chal_len) != 0) {
+                has_challenge = false;
+                mbedtls_platform_zeroize(challenge, sizeof(challenge));
                 return SW_DATA_INVALID();
             }
+            /* OpenSC uses a81 (challenge) + a82 (response) for external
+               authentication. The old code only set this in the a80 branch,
+               so a successful 9B login returned 9000 but the following
+               GENERATE was rejected with 69 82. */
+            has_mgm = true;
+            has_challenge = false;
+            mbedtls_platform_zeroize(challenge, sizeof(challenge));
         }
     }
-    if (meta[1] == PINPOLICY_ALWAYS) {
-        has_pwpiv = false;
-    }
+    /* GENERAL AUTHENTICATE is not a PIN command: never clear has_pwpiv
+       here (9B's meta PIN policy is ALWAYS, which used to log the PIN out
+       on every admin authentication). PIN status is cleared by VERIFY
+       P1=FF, app deselect, RESET, or a new applet selection. */
     return SW_OK();
 }
 
@@ -851,7 +1022,7 @@ static int cmd_asym_keygen(void) {
         return SW_WRONG_LENGTH();
     }
     if (apdu.data[0] != 0xAC) {
-        return SW_WRONG_DATA();
+        return SW_INCORRECT_PARAMS();
     }
     if (P1(apdu) != 0x0) {
         return SW_INCORRECT_P1P2();
@@ -865,14 +1036,14 @@ static int cmd_asym_keygen(void) {
     asn1_ctx_t ctxi, aac = {0};
     asn1_ctx_init(apdu.data, (uint16_t)apdu.nc, &ctxi);
     if (!asn1_find_tag(&ctxi, 0xAC, &aac) || asn1_len(&aac) == 0) {
-        return SW_WRONG_DATA();
+        return SW_INCORRECT_PARAMS();
     }
     asn1_ctx_t a80 = {0}, aaa = {0}, aab = {0};
     asn1_find_tag(&aac, 0x80, &a80);
     asn1_find_tag(&aac, 0xAA, &aaa);
     asn1_find_tag(&aac, 0xAB, &aab);
     if (asn1_len(&a80) == 0) {
-        return SW_WRONG_DATA();
+        return SW_INCORRECT_PARAMS();
     }
     uint16_t key_cert = 0;
     if (key_ref == EF_PIV_KEY_AUTHENTICATION) {
@@ -909,8 +1080,10 @@ static int cmd_asym_keygen(void) {
         uint8_t cert[2048];
         r = x509_create_cert(&rsa, a80.data[0], key_ref, false, cert, sizeof(cert));
         file_t *ef = file_search_by_fid(key_cert, NULL, SPECIFY_ANY);
-        file_put_data(ef, cert + sizeof(cert) - r, r);
-        r = store_keys(&rsa, ALGO_RSA, key_ref == 0x93 ? EF_PIV_KEY_RETIRED18 : key_ref, false);
+        if (r > 0) {
+            piv_store_cert(ef, cert + sizeof(cert) - r, (size_t) r);
+        }
+        r = store_keys_piv(&rsa, ALGO_RSA, key_ref == 0x93 ? EF_PIV_KEY_RETIRED18 : key_ref);
         mbedtls_rsa_free(&rsa);
         if (r != PICOKEYS_OK) {
             return SW_EXEC_ERROR();
@@ -930,8 +1103,10 @@ static int cmd_asym_keygen(void) {
         uint8_t cert[2048];
         r = x509_create_cert(&ecdsa, a80.data[0], key_ref, false, cert, sizeof(cert));
         file_t *ef = file_search_by_fid(key_cert, NULL, SPECIFY_ANY);
-        file_put_data(ef, cert + sizeof(cert) - r, r);
-        r = store_keys(&ecdsa, ALGO_ECDSA, key_ref == 0x93 ? EF_PIV_KEY_RETIRED18 : key_ref, false);
+        if (r > 0) {
+            piv_store_cert(ef, cert + sizeof(cert) - r, (size_t) r);
+        }
+        r = store_keys_piv(&ecdsa, ALGO_ECDSA, key_ref == 0x93 ? EF_PIV_KEY_RETIRED18 : key_ref);
         mbedtls_ecdsa_free(&ecdsa);
         if (r != PICOKEYS_OK) {
             return SW_EXEC_ERROR();
@@ -945,6 +1120,9 @@ static int cmd_asym_keygen(void) {
     uint8_t def_pinpol = PINPOLICY_ONCE;
     if (key_ref == EF_PIV_KEY_SIGNATURE) {
         def_pinpol = PINPOLICY_ALWAYS;
+    }
+    else if (key_ref == EF_PIV_KEY_CARDAUTH) {
+        def_pinpol = PINPOLICY_NEVER;
     }
     uint8_t meta[] = {a80.data[0], asn1_len(&aaa) ? aaa.data[0] : def_pinpol, asn1_len(&aab) ? aab.data[0] : TOUCHPOLICY_ALWAYS, ORIGIN_GENERATED};
     meta_add(key_ref, meta, sizeof(meta));
@@ -962,28 +1140,31 @@ static int cmd_piv_put_data(void) {
     if (P1(apdu) != 0x3F || P2(apdu) != 0xFF) {
         return SW_INCORRECT_P1P2();
     }
+    if (apdu.data[0] == 0x7E || (apdu.data[0] == 0x7F && apdu.nc > 1 && apdu.data[1] == 0x61)) {
+        /* Discovery/7F61 provisioning is not implemented; do not silently
+           return success without storing anything. */
+        return SW_FUNC_NOT_SUPPORTED();
+    }
     asn1_ctx_t ctxi, a5c = {0}, a53 = {0};
     asn1_ctx_init(apdu.data, (uint16_t)apdu.nc, &ctxi);
-    if (apdu.data[0] != 0x7E && apdu.data[0] != 0x7F && (!asn1_find_tag(&ctxi, 0x5C, &a5c) || !asn1_find_tag(&ctxi, 0x53, &a53))) {
-        return SW_WRONG_DATA();
+    if (!asn1_find_tag(&ctxi, 0x5C, &a5c) || !asn1_find_tag(&ctxi, 0x53, &a53)) {
+        return SW_INCORRECT_PARAMS();
     }
-    if (a5c.data && a53.data) {
-        if (a5c.len != 3 || a5c.data[0] != 0x5F || a5c.data[1] != 0xC1) {
-            return SW_WRONG_DATA();
-        }
-        uint16_t fid = (a5c.data[1] << 8 | a5c.data[2]);
-        file_t *ef = file_search_by_fid(fid, NULL, SPECIFY_EF);
-        if (!ef) {
-            return SW_MEMORY_FAILURE();
-        }
-        if (a53.len > 0) {
-            file_put_data(ef, a53.data, a53.len);
-        }
-        else {
-            flash_clear_file(ef);
-        }
-        flash_commit();
+    if (a5c.len != 3 || a5c.data[0] != 0x5F || a5c.data[1] != 0xC1) {
+        return SW_INCORRECT_PARAMS();
     }
+    uint16_t fid = (a5c.data[1] << 8 | a5c.data[2]);
+    file_t *ef = file_search_by_fid(fid, NULL, SPECIFY_EF);
+    if (!ef) {
+        return SW_FILE_NOT_FOUND();
+    }
+    if (a53.len > 0) {
+        file_put_data(ef, a53.data, a53.len);
+    }
+    else {
+        flash_clear_file(ef);
+    }
+    flash_commit();
     return SW_OK();
 }
 
@@ -1009,10 +1190,11 @@ static int cmd_set_mgmkey(void) {
     }
     uint8_t algo = apdu.data[0], key_ref = apdu.data[1], pinlen = apdu.data[2];
     if ((key_ref != EF_PIV_KEY_CARDMGM) || (!(algo == PIV_ALGO_AES128 && pinlen == 16) && !(algo == PIV_ALGO_AES192 && pinlen == 24) && !(algo == PIV_ALGO_AES256 && pinlen == 32) && !(algo == PIV_ALGO_3DES && pinlen == 24))) {
-        return SW_WRONG_DATA();
+        return SW_INCORRECT_PARAMS();
     }
-    file_t *ef = file_search_by_fid(key_ref, NULL, SPECIFY_ANY);
-    file_put_data(ef, apdu.data + 3, pinlen);
+    if (piv_mgm_store(apdu.data + 3, pinlen) != PICOKEYS_OK) {
+        return SW_EXEC_ERROR();
+    }
     uint8_t *meta = NULL, new_meta[4];
     int meta_len = 0;
     if ((meta_len = meta_find(key_ref, &meta)) <= 0) {
@@ -1035,6 +1217,11 @@ static int cmd_move_key(void) {
     }
     uint8_t to = P1(apdu), from = P2(apdu);
     if ((!IS_KEY(to) && to != 0xFF) || !IS_KEY(from)) {
+        return SW_INCORRECT_P1P2();
+    }
+    /* The management key has no asymmetric MOVE KEY semantics; moving its
+       envelope into a key slot would corrupt both representations. */
+    if (from == EF_PIV_KEY_CARDMGM || to == EF_PIV_KEY_CARDMGM) {
         return SW_INCORRECT_P1P2();
     }
     if (IS_RETIRED(from) && IS_ACTIVE(to)) {
@@ -1143,7 +1330,14 @@ static int cmd_piv_change_pin(void) {
     if (!ef) {
         return SW_MEMORY_FAILURE();
     }
-    uint8_t *pin_data = file_get_data(ef), pin_len = apdu.nc - pin_data[0];
+    uint8_t *pin_data = file_get_data(ef);
+    if (apdu.nc < pin_data[0]) {
+        return SW_WRONG_LENGTH();
+    }
+    uint8_t pin_len = (uint8_t) (apdu.nc - pin_data[0]);
+    if (!piv_pin_digits(apdu.data + pin_data[0], pin_len)) {
+        return SW_INCORRECT_PARAMS();
+    }
     uint16_t ret = check_pin(ef, apdu.data, pin_data[0]);
     if (ret != 0x9000) {
         return ret;
@@ -1154,6 +1348,9 @@ static int cmd_piv_change_pin(void) {
     dhash[1] = 0x1; // Format
     pin_derive_verifier(apdu.data + pin_data[0], pin_len, dhash + 2);
     file_put_data(ef, dhash, sizeof(dhash));
+    has_pwpiv = true;
+    pin_derive_session(apdu.data + pin_data[0], pin_len, session_pwpiv);
+    pin_reset_retries(ef, true);
     flash_commit();
     return SW_OK();
 }
@@ -1166,7 +1363,14 @@ static int cmd_piv_reset_retry(void) {
     if (!ef) {
         return SW_MEMORY_FAILURE();
     }
-    uint8_t *puk_data = file_get_data(ef), pin_len = apdu.nc - puk_data[0];
+    uint8_t *puk_data = file_get_data(ef);
+    if (apdu.nc < puk_data[0]) {
+        return SW_WRONG_LENGTH();
+    }
+    uint8_t pin_len = (uint8_t) (apdu.nc - puk_data[0]);
+    if (!piv_pin_digits(apdu.data + puk_data[0], pin_len)) {
+        return SW_INCORRECT_PARAMS();
+    }
     uint16_t ret = check_pin(ef, apdu.data, puk_data[0]);
     if (ret != 0x9000) {
         return ret;
@@ -1177,6 +1381,8 @@ static int cmd_piv_reset_retry(void) {
     pin_derive_verifier(apdu.data + puk_data[0], pin_len, dhash + 2);
     ef = file_search_by_fid(EF_PIV_PIN, NULL, SPECIFY_ANY);
     file_put_data(ef, dhash, sizeof(dhash));
+    has_pwpiv = true;
+    pin_derive_session(apdu.data + puk_data[0], pin_len, session_pwpiv);
     pin_reset_retries(ef, true);
     flash_commit();
     return SW_OK();
@@ -1186,31 +1392,44 @@ static int cmd_set_retries(void) {
     if (!has_mgm) {
         return SW_SECURITY_STATUS_NOT_SATISFIED();
     }
+    if (P1(apdu) == 0 || P2(apdu) == 0) {
+        return SW_INCORRECT_PARAMS();
+    }
     file_t *ef = file_search_by_fid(EF_PW_RETRIES, NULL, SPECIFY_ANY);
-    if (!ef) {
+    if (!ef || file_get_size(ef) < 6) {
         return SW_MEMORY_FAILURE();
     }
     uint8_t *tmp = (uint8_t *)calloc(1, file_get_size(ef));
+    if (!tmp) {
+        return SW_MEMORY_FAILURE();
+    }
     memcpy(tmp, file_get_data(ef), file_get_size(ef));
     tmp[4] = P1(apdu);
     tmp[5] = P2(apdu);
     file_put_data(ef, tmp, file_get_size(ef));
     free(tmp);
 
+    /* Yubico SET PIN RETRIES also resets the PIN/PUK reference data to the
+       factory defaults.  Use the same 6-byte PIN default as provisioning. */
     ef = file_search_by_fid(EF_PIV_PIN, NULL, SPECIFY_ANY);
-    const uint8_t def_pin[8] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0xFF, 0xFF };
-
+    if (!ef) {
+        return SW_MEMORY_FAILURE();
+    }
+    const uint8_t def_pin[6] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36 };
     uint8_t dhash[34];
     dhash[0] = sizeof(def_pin);
-    dhash[1] = 0x1; // Format
+    dhash[1] = 0x1;
     pin_derive_verifier(def_pin, sizeof(def_pin), dhash + 2);
     file_put_data(ef, dhash, sizeof(dhash));
     pin_reset_retries(ef, true);
 
     ef = file_search_by_fid(EF_PIV_PUK, NULL, SPECIFY_ANY);
+    if (!ef) {
+        return SW_MEMORY_FAILURE();
+    }
     const uint8_t def_puk[8] = {0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38};
     dhash[0] = sizeof(def_puk);
-    dhash[1] = 0x1; // Format
+    dhash[1] = 0x1;
     pin_derive_verifier(def_puk, sizeof(def_puk), dhash + 2);
     file_put_data(ef, dhash, sizeof(dhash));
     pin_reset_retries(ef, true);
@@ -1227,9 +1446,8 @@ static void piv_delete_fid(uint16_t fid) {
 }
 
 static int cmd_reset(void) {
-    if (!has_mgm) {
-        return SW_SECURITY_STATUS_NOT_SATISFIED();
-    }
+    /* Yubico PIV RESET is unauthenticated and only succeeds when the PIN or
+       PUK is blocked; otherwise it returns 6985. */
     if (P1(apdu) != 0x0 || P2(apdu) != 0x0) {
         return SW_INCORRECT_P1P2();
     }
@@ -1239,12 +1457,17 @@ static int cmd_reset(void) {
         return SW_REFERENCE_NOT_FOUND();
     }
     uint8_t retPIN = *(file_get_data(pw_status) + 3 + (EF_PIV_PIN & 0xf)), retPUK = *(file_get_data(pw_status) + 3 + (EF_PIV_PUK & 0xf));
-    if (retPIN != 0 || retPUK != 0) {
-        return SW_INCORRECT_PARAMS();
+    if (retPIN != 0 && retPUK != 0) {
+        return set_res_sw(0x69, 0x85);
     }
     /* PIV RESET must only remove PIV objects.  It used to call
        file_initialize_flash(true), which erased the shared pool and with it
-       all OpenPGP keys and FIDO2 credentials. */
+       all OpenPGP keys and FIDO2 credentials.  Delete the active key slots
+       (9A-9E, including the 9B management key) and their metadata, then the
+       retired/cert/BIT ranges. */
+    for (uint16_t fid = 0x009a; fid <= 0x009e; fid++) {
+        piv_delete_fid(fid);
+    }
     for (uint16_t fid = 0x0082; fid <= 0x0096; fid++) {
         if (fid == EF_SIG_COUNT) { /* 0x0093 belongs to OpenPGP */
             continue;
@@ -1262,6 +1485,15 @@ static int cmd_reset(void) {
     piv_delete_fid(EF_PIV_DISCOVERY);
     piv_delete_fid(EF_PIV_BITGT);
     piv_delete_fid(EF_PIV_KEY_ATTESTATION);
+    /* The shared PW_PRIV file is intentionally not deleted; reset only the
+       PIV PIN/PUK retry bytes (indices 7/8 in the 9-byte layout). */
+    if (file_get_size(pw_status) == 9) {
+        uint8_t retries[9];
+        memcpy(retries, file_get_data(pw_status), sizeof(retries));
+        retries[3 + (EF_PIV_PIN & 0xf)] = 3;
+        retries[3 + (EF_PIV_PUK & 0xf)] = 3;
+        file_put_data(pw_status, retries, sizeof(retries));
+    }
     flash_commit();
     init_piv();
     return SW_OK();
@@ -1312,7 +1544,7 @@ static int cmd_attestation(void) {
         mbedtls_ecdsa_free(&ctx);
     }
     else {
-        return SW_WRONG_DATA();
+        return SW_INCORRECT_PARAMS();
     }
     if (r <= 0) {
         return SW_EXEC_ERROR();
@@ -1342,19 +1574,19 @@ static int cmd_import_asym(void) {
         asn1_find_tag(&ctxi, 0x01, &a1);
         asn1_find_tag(&ctxi, 0x02, &a2);
         if (asn1_len(&a1) <= 0 || asn1_len(&a2) <= 0) {
-            return SW_WRONG_DATA();
+            return SW_INCORRECT_PARAMS();
         }
         mbedtls_rsa_context rsa;
         mbedtls_rsa_init(&rsa);
         int r = mbedtls_mpi_read_binary(&rsa.P, a1.data, a1.len);
         if (r != 0) {
             mbedtls_rsa_free(&rsa);
-            return SW_WRONG_DATA();
+            return SW_INCORRECT_PARAMS();
         }
         r = mbedtls_mpi_read_binary(&rsa.Q, a2.data, a2.len);
         if (r != 0) {
             mbedtls_rsa_free(&rsa);
-            return SW_WRONG_DATA();
+            return SW_INCORRECT_PARAMS();
         }
         int exponent = 65537;
         mbedtls_mpi_lset(&rsa.E, exponent);
@@ -1373,7 +1605,7 @@ static int cmd_import_asym(void) {
             mbedtls_rsa_free(&rsa);
             return SW_EXEC_ERROR();
         }
-        r = store_keys(&rsa, ALGO_RSA, key_ref == 0x93 ? EF_PIV_KEY_RETIRED18 : key_ref, false);
+        r = store_keys_piv(&rsa, ALGO_RSA, key_ref == 0x93 ? EF_PIV_KEY_RETIRED18 : key_ref);
         mbedtls_rsa_free(&rsa);
         if (r != 0) {
             return SW_EXEC_ERROR();
@@ -1383,7 +1615,7 @@ static int cmd_import_asym(void) {
         asn1_ctx_t a6 = {0};
         asn1_find_tag(&ctxi, 0x06, &a6);
         if (asn1_len(&a6) <= 0) {
-            return SW_WRONG_DATA();
+            return SW_INCORRECT_PARAMS();
         }
         mbedtls_ecp_group_id gid = algo == PIV_ALGO_ECCP256 ? MBEDTLS_ECP_DP_SECP256R1 : MBEDTLS_ECP_DP_SECP384R1;
         mbedtls_ecdsa_context ecdsa;
@@ -1403,18 +1635,21 @@ static int cmd_import_asym(void) {
             mbedtls_ecdsa_free(&ecdsa);
             return SW_EXEC_ERROR();
         }
-        r = store_keys(&ecdsa, ALGO_ECDSA, key_ref == 0x93 ? EF_PIV_KEY_RETIRED18 : key_ref, false);
+        r = store_keys_piv(&ecdsa, ALGO_ECDSA, key_ref == 0x93 ? EF_PIV_KEY_RETIRED18 : key_ref);
         mbedtls_ecdsa_free(&ecdsa);
         if (r != 0) {
             return SW_EXEC_ERROR();
         }
     }
     else {
-        return SW_WRONG_DATA();
+        return SW_INCORRECT_PARAMS();
     }
     uint8_t def_pinpol = PINPOLICY_ONCE;
     if (key_ref == EF_PIV_KEY_SIGNATURE) {
         def_pinpol = PINPOLICY_ALWAYS;
+    }
+    else if (key_ref == EF_PIV_KEY_CARDAUTH) {
+        def_pinpol = PINPOLICY_NEVER;
     }
     uint8_t meta[] = { algo,  asn1_len(&aaa) ? aaa.data[0] : def_pinpol, asn1_len(&aab) ? aab.data[0] : TOUCHPOLICY_ALWAYS, ORIGIN_IMPORTED };
     meta_add(key_ref, meta, sizeof(meta));

@@ -697,43 +697,169 @@ int reset_sig_count(void) {
     return PICOKEYS_OK;
 }
 
-int store_keys(void *key_ctx, int type, uint16_t key_id, bool use_kek) {
-    int r, key_size = 0;
-    uint8_t kdata[4096 / 8]; //worst
+/* PIV private-key envelopes:
+ *   PIVKEY1: [magic:8][len:2 BE][DEK CFB ciphertext]
+ *   PIVKEY2: [magic:8][len:2 BE][iv:16][kbase CFB ciphertext]
+ *
+ * PIVKEY1 is used when an OpenPGP/PIV PIN session can derive the DEK.
+ * PIV import is often authorized by the management key only, so PIVKEY2 uses
+ * the device-bound kbase as a fallback; it is not a PIN-derived secret, but it
+ * keeps raw private keys off the flash until Secure Boot/Flash Encryption or a
+ * future PIV PIN-wrapped KEK is available. */
+#define PIV_KEY_MAGIC_DEK   "PIVKEY1"
+#define PIV_KEY_MAGIC_KBASE "PIVKEY2"
+#define PIV_KEY_MAGIC_LEN   8
+#define PIV_KEY_DEK_HDR_LEN 10
+#define PIV_KEY_KBASE_HDR_LEN (10 + 16)
+#define PIV_KEY_MAX_HDR_LEN PIV_KEY_KBASE_HDR_LEN
+#define PIV_KEY_MAX_LEN     512
 
-    //if (!has_pw3)
-    //    return PICOKEYS_NO_LOGIN;
-    //file_t *pw3 = file_search_by_fid(EF_PW3, NULL, SPECIFY_EF);
-    //if (!pw3)
-    //    return PICOKEYS_ERR_FILE_NOT_FOUND;
-    file_t *ef = file_search_by_fid(key_id, NULL, SPECIFY_EF);
-    if (!ef) {
-        return PICOKEYS_ERR_FILE_NOT_FOUND;
+static bool piv_key_is_protected(const uint8_t *data, size_t len) {
+    return data != NULL && len >= PIV_KEY_DEK_HDR_LEN + 1 &&
+           (memcmp(data, PIV_KEY_MAGIC_DEK, PIV_KEY_MAGIC_LEN) == 0 ||
+            memcmp(data, PIV_KEY_MAGIC_KBASE, PIV_KEY_MAGIC_LEN) == 0);
+}
+
+static int piv_key_protect_kbase(const uint8_t *plain, size_t len,
+                                 uint8_t *out, size_t out_cap, size_t *out_len) {
+    if (out_cap < PIV_KEY_KBASE_HDR_LEN + len) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    uint8_t kbase[32];
+    derive_kbase(kbase);
+    memcpy(out, PIV_KEY_MAGIC_KBASE, PIV_KEY_MAGIC_LEN);
+    out[8] = (uint8_t) (len >> 8);
+    out[9] = (uint8_t) (len & 0xff);
+    memcpy(out + 10, random_bytes_get(16), 16);
+    memcpy(out + PIV_KEY_KBASE_HDR_LEN, plain, len);
+    int r = aes_encrypt_cfb_256(kbase, out + 10, out + PIV_KEY_KBASE_HDR_LEN, (uint16_t) len);
+    mbedtls_platform_zeroize(kbase, sizeof(kbase));
+    if (r != PICOKEYS_OK) {
+        mbedtls_platform_zeroize(out, PIV_KEY_KBASE_HDR_LEN + len);
+        return r;
+    }
+    *out_len = PIV_KEY_KBASE_HDR_LEN + len;
+    return PICOKEYS_OK;
+}
+
+static int piv_key_protect(const uint8_t *plain, size_t len,
+                           uint8_t *out, size_t out_cap, size_t *out_len) {
+    if (plain == NULL || out == NULL || out_len == NULL || len == 0 ||
+        len > PIV_KEY_MAX_LEN) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    if (out_cap < PIV_KEY_DEK_HDR_LEN + len) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    memcpy(out, PIV_KEY_MAGIC_DEK, PIV_KEY_MAGIC_LEN);
+    out[8] = (uint8_t) (len >> 8);
+    out[9] = (uint8_t) (len & 0xff);
+    memcpy(out + PIV_KEY_DEK_HDR_LEN, plain, len);
+    int r = dek_encrypt(out + PIV_KEY_DEK_HDR_LEN, len);
+    if (r == PICOKEYS_OK) {
+        *out_len = PIV_KEY_DEK_HDR_LEN + len;
+        return PICOKEYS_OK;
+    }
+    mbedtls_platform_zeroize(out, PIV_KEY_DEK_HDR_LEN + len);
+    return piv_key_protect_kbase(plain, len, out, out_cap, out_len);
+}
+
+static int piv_key_unprotect(const uint8_t *stored, size_t stored_len,
+                             uint8_t *plain, size_t plain_cap, size_t *plain_len) {
+    if (!piv_key_is_protected(stored, stored_len)) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    size_t len = ((size_t) stored[8] << 8) | stored[9];
+    if (len == 0 || len > PIV_KEY_MAX_LEN || len > plain_cap) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    if (memcmp(stored, PIV_KEY_MAGIC_DEK, PIV_KEY_MAGIC_LEN) == 0) {
+        if (stored_len != PIV_KEY_DEK_HDR_LEN + len) {
+            return PICOKEYS_WRONG_DATA;
+        }
+        memcpy(plain, stored + PIV_KEY_DEK_HDR_LEN, len);
+        int r = dek_decrypt(plain, len);
+        if (r != PICOKEYS_OK) {
+            mbedtls_platform_zeroize(plain, len);
+            return PICOKEYS_EXEC_ERROR;
+        }
+    }
+    else {
+        if (stored_len != PIV_KEY_KBASE_HDR_LEN + len) {
+            return PICOKEYS_WRONG_DATA;
+        }
+        uint8_t kbase[32];
+        derive_kbase(kbase);
+        memcpy(plain, stored + PIV_KEY_KBASE_HDR_LEN, len);
+        int r = aes_decrypt_cfb_256(kbase, stored + 10, plain, (uint16_t) len);
+        mbedtls_platform_zeroize(kbase, sizeof(kbase));
+        if (r != PICOKEYS_OK) {
+            mbedtls_platform_zeroize(plain, len);
+            return PICOKEYS_EXEC_ERROR;
+        }
+    }
+    *plain_len = len;
+    return PICOKEYS_OK;
+}
+
+static int serialize_private_key(void *key_ctx, int type,
+                                 uint8_t *kdata, size_t kdata_cap, size_t *key_size) {
+    size_t size = 0;
+    if (kdata == NULL || key_size == NULL) {
+        return PICOKEYS_WRONG_DATA;
     }
     if (type == ALGO_RSA) {
         mbedtls_rsa_context *rsa = (mbedtls_rsa_context *) key_ctx;
-        key_size = mbedtls_mpi_size(&rsa->P) + mbedtls_mpi_size(&rsa->Q);
-        mbedtls_mpi_write_binary(&rsa->P, kdata, key_size / 2);
-        mbedtls_mpi_write_binary(&rsa->Q, kdata + key_size / 2, key_size / 2);
+        size = mbedtls_mpi_size(&rsa->P) + mbedtls_mpi_size(&rsa->Q);
+        if (size == 0 || size > kdata_cap || (size & 1) != 0) {
+            return PICOKEYS_WRONG_DATA;
+        }
+        if (mbedtls_mpi_write_binary(&rsa->P, kdata, size / 2) != 0 ||
+            mbedtls_mpi_write_binary(&rsa->Q, kdata + size / 2, size / 2) != 0) {
+            return PICOKEYS_EXEC_ERROR;
+        }
     }
     else if (type == ALGO_ECDSA || type == ALGO_ECDH || type == ALGO_EDDSA) {
         mbedtls_ecp_keypair *ecdsa = (mbedtls_ecp_keypair *) key_ctx;
         size_t olen = 0;
         kdata[0] = ecdsa->grp.id & 0xff;
-        mbedtls_ecp_write_key_ext(ecdsa, &olen, kdata + 1, sizeof(kdata) - 1);
-        key_size = olen + 1;
+        if (mbedtls_ecp_write_key_ext(ecdsa, &olen, kdata + 1, kdata_cap - 1) != 0) {
+            return PICOKEYS_EXEC_ERROR;
+        }
+        size = olen + 1;
     }
     else if (type & ALGO_AES) {
         if (type == ALGO_AES_128) {
-            key_size = 16;
+            size = 16;
         }
         else if (type == ALGO_AES_192) {
-            key_size = 24;
+            size = 24;
         }
         else if (type == ALGO_AES_256) {
-            key_size = 32;
+            size = 32;
         }
-        memcpy(kdata, key_ctx, key_size);
+        if (size > kdata_cap) {
+            return PICOKEYS_WRONG_DATA;
+        }
+        memcpy(kdata, key_ctx, size);
+    }
+    if (size == 0 || size > kdata_cap) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    *key_size = size;
+    return PICOKEYS_OK;
+}
+
+int store_keys(void *key_ctx, int type, uint16_t key_id, bool use_kek) {
+    uint8_t kdata[PIV_KEY_MAX_LEN];
+    size_t key_size = 0;
+    file_t *ef = file_search_by_fid(key_id, NULL, SPECIFY_EF);
+    if (!ef) {
+        return PICOKEYS_ERR_FILE_NOT_FOUND;
+    }
+    int r = serialize_private_key(key_ctx, type, kdata, sizeof(kdata), &key_size);
+    if (r != PICOKEYS_OK) {
+        return r;
     }
     if (use_kek) {
         r = dek_encrypt(kdata, key_size);
@@ -741,10 +867,7 @@ int store_keys(void *key_ctx, int type, uint16_t key_id, bool use_kek) {
             return r;
         }
     }
-    //r = aes_encrypt_cfb_256(file_read(pw3->data+2), session_pw3, kdata, key_size);
-    //if (r != PICOKEYS_OK)
-    //    return r;
-    r = file_put_data(ef, kdata, key_size);
+    r = file_put_data(ef, kdata, (uint16_t) key_size);
     if (r != PICOKEYS_OK) {
         return r;
     }
@@ -752,24 +875,231 @@ int store_keys(void *key_ctx, int type, uint16_t key_id, bool use_kek) {
     return PICOKEYS_OK;
 }
 
-int load_private_key_rsa(mbedtls_rsa_context *ctx, file_t *fkey, bool use_dek) {
-    int key_size = file_get_size(fkey);
-    uint8_t kdata[4096 / 8];
-    if (key_size <= 0 || key_size > (int)sizeof(kdata) || (key_size & 1) != 0) {
+/* PIV private keys are written with a DEK envelope when a PIN session is
+ * available, or with the device-bound kbase envelope otherwise. OpenPGP keys
+ * keep using store_keys(..., true). */
+int store_keys_piv(void *key_ctx, int type, uint16_t key_id) {
+    /* FID 0x9B holds the raw 3DES/AES management key; it is not an
+       asymmetric private key and must not be enveloped. */
+    if (key_id == EF_PIV_KEY_CARDMGM) {
         return PICOKEYS_WRONG_DATA;
     }
-    memcpy(kdata, file_get_data(fkey), key_size);
-    if (use_dek && dek_decrypt(kdata, key_size) != 0) {
+    uint8_t kdata[PIV_KEY_MAX_LEN];
+    uint8_t wrapped[PIV_KEY_MAX_HDR_LEN + PIV_KEY_MAX_LEN];
+    size_t key_size = 0, wrapped_len = 0;
+    file_t *ef = file_search_by_fid(key_id, NULL, SPECIFY_EF);
+    if (!ef) {
+        return PICOKEYS_ERR_FILE_NOT_FOUND;
+    }
+    int r = serialize_private_key(key_ctx, type, kdata, sizeof(kdata), &key_size);
+    if (r != PICOKEYS_OK) {
+        mbedtls_platform_zeroize(kdata, sizeof(kdata));
+        return r;
+    }
+    /* 9E Card Authentication must work without a PIN, so its private key
+       must never be wrapped with the PIN/DEK envelope.  Force kbase for 9E. */
+    if (key_id == EF_PIV_KEY_CARDAUTH) {
+        r = piv_key_protect_kbase(kdata, key_size, wrapped, sizeof(wrapped), &wrapped_len);
+    }
+    else {
+        r = piv_key_protect(kdata, key_size, wrapped, sizeof(wrapped), &wrapped_len);
+    }
+    mbedtls_platform_zeroize(kdata, sizeof(kdata));
+    if (r != PICOKEYS_OK) {
+        mbedtls_platform_zeroize(wrapped, sizeof(wrapped));
+        return r;
+    }
+    r = file_put_data(ef, wrapped, (uint16_t) wrapped_len);
+    mbedtls_platform_zeroize(wrapped, sizeof(wrapped));
+    if (r != PICOKEYS_OK) {
+        return r;
+    }
+    flash_commit();
+    return PICOKEYS_OK;
+}
+
+/* One-time migration for cards provisioned before the envelope existed.
+ * Runs after scan_files_piv() has created the attestation key, so it also
+ * wraps that key. Protected files are skipped; a plaintext file that cannot be
+ * wrapped is left untouched rather than risking the only key copy. */
+int piv_protect_legacy_keys(void) {
+    static const uint16_t ranges[][2] = {
+        { EF_PIV_KEY_RETIRED1, EF_PIV_KEY_RETIRED17 },
+        { EF_PIV_KEY_RETIRED19, EF_PIV_KEY_RETIRED18 },
+        { EF_PIV_KEY_AUTHENTICATION, EF_PIV_KEY_CARDAUTH },
+    };
+    uint8_t plain[PIV_KEY_MAX_LEN];
+    uint8_t wrapped[PIV_KEY_MAX_HDR_LEN + PIV_KEY_MAX_LEN];
+    int changed = 0;
+
+    for (size_t r = 0; r < sizeof(ranges) / sizeof(ranges[0]); r++) {
+        for (uint16_t fid = ranges[r][0]; fid <= ranges[r][1]; fid++) {
+            /* 0x9B is the PIV management key (3DES/AES), not an asymmetric
+               private key. mig_piv_auth reads it raw for mbedtls_des3/aes
+               setup, so it must not be wrapped. */
+            if (fid == EF_PIV_KEY_CARDMGM) {
+                continue;
+            }
+            file_t *ef = file_search_by_fid(fid, NULL, SPECIFY_EF);
+            if (!ef || !ef->data) {
+                continue;
+            }
+            uint16_t len = file_get_size(ef);
+            const uint8_t *data = file_get_data(ef);
+            if (len == 0 || len > sizeof(plain) || data == NULL ||
+                piv_key_is_protected(data, len)) {
+                continue;
+            }
+            memcpy(plain, data, len);
+            size_t wrapped_len = 0;
+            if (piv_key_protect(plain, len, wrapped, sizeof(wrapped), &wrapped_len) ==
+                    PICOKEYS_OK &&
+                file_put_data(ef, wrapped, (uint16_t) wrapped_len) == PICOKEYS_OK) {
+                changed++;
+            }
+            mbedtls_platform_zeroize(plain, sizeof(plain));
+            mbedtls_platform_zeroize(wrapped, sizeof(wrapped));
+        }
+    }
+    /* Attestation is outside the numeric key ranges (0xfb). */
+    file_t *ef = file_search_by_fid(EF_PIV_KEY_ATTESTATION, NULL, SPECIFY_EF);
+    if (ef && ef->data) {
+        uint16_t len = file_get_size(ef);
+        const uint8_t *data = file_get_data(ef);
+        if (len > 0 && len <= sizeof(plain) && data != NULL &&
+            !piv_key_is_protected(data, len)) {
+            memcpy(plain, data, len);
+            size_t wrapped_len = 0;
+            if (piv_key_protect(plain, len, wrapped, sizeof(wrapped), &wrapped_len) ==
+                    PICOKEYS_OK &&
+                file_put_data(ef, wrapped, (uint16_t) wrapped_len) == PICOKEYS_OK) {
+                changed++;
+            }
+            mbedtls_platform_zeroize(plain, sizeof(plain));
+            mbedtls_platform_zeroize(wrapped, sizeof(wrapped));
+        }
+    }
+    if (changed > 0) {
+        printf("PIV: wrapped %d legacy key file(s)\r\n", changed);
+        flash_commit();
+    }
+    return changed;
+}
+
+/* The PIV management key (FID 0x9B) is needed before any PIN/DEK session,
+ * so it always uses the kbase envelope. The loader also accepts a legacy raw
+ * value for cards provisioned before the envelope existed. */
+int piv_mgm_load(uint8_t *key, size_t cap, size_t *key_len) {
+    file_t *ef = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_EF);
+    if (!ef || !file_has_data(ef)) {
+        return PICOKEYS_ERR_FILE_NOT_FOUND;
+    }
+    const uint8_t *stored = file_get_data(ef);
+    size_t stored_len = file_get_size(ef);
+    if (stored == NULL || stored_len == 0) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    if (piv_key_is_protected(stored, stored_len)) {
+        return piv_key_unprotect(stored, stored_len, key, cap, key_len);
+    }
+    if (stored_len > cap) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    memcpy(key, stored, stored_len);
+    *key_len = stored_len;
+    return PICOKEYS_OK;
+}
+
+int piv_mgm_store(const uint8_t *key, size_t key_len) {
+    if (key == NULL || (key_len != 16 && key_len != 24 && key_len != 32)) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    file_t *ef = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_EF);
+    if (!ef) {
+        return PICOKEYS_ERR_FILE_NOT_FOUND;
+    }
+    uint8_t wrapped[PIV_KEY_MAX_HDR_LEN + 32];
+    size_t wrapped_len = 0;
+    int r = piv_key_protect_kbase(key, key_len, wrapped, sizeof(wrapped), &wrapped_len);
+    if (r != PICOKEYS_OK) {
+        mbedtls_platform_zeroize(wrapped, sizeof(wrapped));
+        return r;
+    }
+    r = file_put_data(ef, wrapped, (uint16_t) wrapped_len);
+    mbedtls_platform_zeroize(wrapped, sizeof(wrapped));
+    if (r != PICOKEYS_OK) {
+        return r;
+    }
+    flash_commit();
+    return PICOKEYS_OK;
+}
+
+int piv_mgm_migrate(void) {
+    file_t *ef = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_EF);
+    if (!ef || !file_has_data(ef)) {
+        return 0;
+    }
+    const uint8_t *stored = file_get_data(ef);
+    size_t stored_len = file_get_size(ef);
+    if (stored == NULL || stored_len == 0 || piv_key_is_protected(stored, stored_len) ||
+        stored_len > 32) {
+        return 0;
+    }
+    uint8_t raw[32];
+    memcpy(raw, stored, stored_len);
+    int r = piv_mgm_store(raw, stored_len);
+    mbedtls_platform_zeroize(raw, sizeof(raw));
+    if (r == PICOKEYS_OK) {
+        printf("PIV: wrapped management key\r\n");
+        return 1;
+    }
+    return 0;
+}
+
+static int load_key_bytes(file_t *fkey, uint8_t *kdata, size_t cap,
+                           size_t *key_size, bool use_dek) {
+    const uint8_t *stored = file_get_data(fkey);
+    size_t stored_len = file_get_size(fkey);
+    if (stored == NULL || stored_len == 0) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    if (piv_key_is_protected(stored, stored_len)) {
+        return piv_key_unprotect(stored, stored_len, kdata, cap, key_size);
+    }
+    if (stored_len > cap) {
+        return PICOKEYS_WRONG_DATA;
+    }
+    memcpy(kdata, stored, stored_len);
+    if (use_dek && dek_decrypt(kdata, stored_len) != 0) {
+        mbedtls_platform_zeroize(kdata, stored_len);
         return PICOKEYS_EXEC_ERROR;
     }
+    *key_size = stored_len;
+    return PICOKEYS_OK;
+}
+
+int load_private_key_rsa(mbedtls_rsa_context *ctx, file_t *fkey, bool use_dek) {
+    uint8_t kdata[PIV_KEY_MAX_LEN];
+    size_t key_size = 0;
+    int r = load_key_bytes(fkey, kdata, sizeof(kdata), &key_size, use_dek);
+    if (r != PICOKEYS_OK) {
+        return r;
+    }
+    if (key_size == 0 || key_size > sizeof(kdata) || (key_size & 1) != 0) {
+        mbedtls_platform_zeroize(kdata, sizeof(kdata));
+        return PICOKEYS_WRONG_DATA;
+    }
     if (mbedtls_mpi_read_binary(&ctx->P, kdata, key_size / 2) != 0) {
+        mbedtls_platform_zeroize(kdata, sizeof(kdata));
         mbedtls_rsa_free(ctx);
         return PICOKEYS_WRONG_DATA;
     }
     if (mbedtls_mpi_read_binary(&ctx->Q, kdata + key_size / 2, key_size / 2) != 0) {
+        mbedtls_platform_zeroize(kdata, sizeof(kdata));
         mbedtls_rsa_free(ctx);
         return PICOKEYS_WRONG_DATA;
     }
+    mbedtls_platform_zeroize(kdata, sizeof(kdata));
     if (mbedtls_mpi_lset(&ctx->E, 0x10001) != 0) {
         mbedtls_rsa_free(ctx);
         return PICOKEYS_EXEC_ERROR;
@@ -790,18 +1120,20 @@ int load_private_key_rsa(mbedtls_rsa_context *ctx, file_t *fkey, bool use_dek) {
 }
 
 int load_private_key_ecdsa(mbedtls_ecp_keypair *ctx, file_t *fkey, bool use_dek) {
-    int key_size = file_get_size(fkey);
     uint8_t kdata[67]; //Worst case, 521 bit + 1byte
-    if (key_size <= 1 || key_size > (int)sizeof(kdata)) {
+    size_t key_size = 0;
+    int r = load_key_bytes(fkey, kdata, sizeof(kdata), &key_size, use_dek);
+    if (r != PICOKEYS_OK) {
+        return r;
+    }
+    if (key_size <= 1 || key_size > sizeof(kdata)) {
+        mbedtls_platform_zeroize(kdata, sizeof(kdata));
         return PICOKEYS_WRONG_DATA;
     }
-    memcpy(kdata, file_get_data(fkey), key_size);
-    if (use_dek && dek_decrypt(kdata, key_size) != 0) {
-        return PICOKEYS_EXEC_ERROR;
-    }
     mbedtls_ecp_group_id gid = kdata[0];
-    int r = mbedtls_ecp_read_key(gid, ctx, kdata + 1, key_size - 1);
+    r = mbedtls_ecp_read_key(gid, ctx, kdata + 1, key_size - 1);
     if (r != 0) {
+        mbedtls_platform_zeroize(kdata, sizeof(kdata));
         mbedtls_ecp_keypair_free(ctx);
         return PICOKEYS_EXEC_ERROR;
     }
