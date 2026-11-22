@@ -217,14 +217,11 @@ static size_t piv_build_chuid(uint8_t *buf, size_t cap) {
         piv_fascn_char(fascn, &bit, value);
     }
 
-    uint8_t seed[16] = {0};
-    uint32_t serial = (uint32_t) get_serial();
-    memcpy(seed, &serial, sizeof(serial));
-    memcpy(seed + sizeof(serial), "PIV-CHUID", 9);
-    uint8_t digest[32];
-    hash256(seed, sizeof(seed), digest);
+    /* Random UUID generated once at provisioning and stored in the CHUID.
+       It is therefore stable for the lifetime of the CHUID, but not
+       predictable from the device serial number. */
     uint8_t guid[16];
-    memcpy(guid, digest, sizeof(guid));
+    memcpy(guid, random_bytes_get(sizeof(guid)), sizeof(guid));
     guid[6] = (uint8_t) ((guid[6] & 0x0F) | 0x40); /* UUID version 4 */
     guid[8] = (uint8_t) ((guid[8] & 0x3F) | 0x80); /* RFC 4122 variant */
 
