@@ -165,6 +165,85 @@ static int x509_create_cert(void *pk_ctx, uint8_t algo, uint8_t slot, bool attes
     return ret;
 }
 
+static void piv_fascn_char(uint8_t *out, unsigned *bit, uint8_t value) {
+    uint8_t five = (uint8_t) ((value & 0x0F) << 1);
+    uint8_t ones = 0;
+    for (uint8_t x = five; x; x >>= 1) {
+        ones += x & 1;
+    }
+    if ((ones & 1) == 0) {
+        five |= 1; /* odd parity bit in the LSB */
+    }
+    for (int i = 4; i >= 0; i--) {
+        if (five & (1 << i)) {
+            out[*bit >> 3] |= (uint8_t) (1 << (7 - (*bit & 7)));
+        }
+        (*bit)++;
+    }
+}
+
+static size_t piv_build_chuid(uint8_t *buf, size_t cap) {
+    if (cap < 64) {
+        return 0;
+    }
+    char text[40];
+    memset(text, '0', sizeof(text));
+    text[0] = ';';
+    text[1] = text[2] = text[3] = text[4] = '9';
+    /* Keep the next character 8/9 so the ;9999 prefix is recognised as
+       non-government issued and OpenSC prefers the GUID below. */
+    text[5] = '9';
+    char serial_txt[11];
+    snprintf(serial_txt, sizeof(serial_txt), "%010u", (unsigned) get_serial());
+    memcpy(text + 6, serial_txt, 10);
+    text[39] = '?';
+
+    uint8_t fascn[25] = {0};
+    unsigned bit = 0;
+    for (size_t i = 0; i < sizeof(text); i++) {
+        uint8_t value;
+        if (text[i] >= '0' && text[i] <= '9') {
+            value = (uint8_t) (text[i] - '0');
+        }
+        else if (text[i] == ';') {
+            value = 0x0D;
+        }
+        else if (text[i] == '=') {
+            value = 0x0E;
+        }
+        else {
+            value = 0x0F;
+        }
+        piv_fascn_char(fascn, &bit, value);
+    }
+
+    uint8_t seed[16] = {0};
+    uint32_t serial = (uint32_t) get_serial();
+    memcpy(seed, &serial, sizeof(serial));
+    memcpy(seed + sizeof(serial), "PIV-CHUID", 9);
+    uint8_t digest[32];
+    hash256(seed, sizeof(seed), digest);
+    uint8_t guid[16];
+    memcpy(guid, digest, sizeof(guid));
+    guid[6] = (uint8_t) ((guid[6] & 0x0F) | 0x40); /* UUID version 4 */
+    guid[8] = (uint8_t) ((guid[8] & 0x3F) | 0x80); /* RFC 4122 variant */
+
+    size_t n = 0;
+    buf[n++] = 0x30;
+    buf[n++] = 25;
+    memcpy(buf + n, fascn, sizeof(fascn));
+    n += sizeof(fascn);
+    buf[n++] = 0x34;
+    buf[n++] = 16;
+    memcpy(buf + n, guid, sizeof(guid));
+    n += sizeof(guid);
+    buf[n++] = 0x35;
+    buf[n++] = 8;
+    const uint8_t expiration[8] = { 0x20, 0x74, 0x12, 0x31, 0x23, 0x59, 0x59, 0x00 };
+    memcpy(buf + n, expiration, sizeof(expiration));
+    n += sizeof(expiration);
+    return n;
+}
 static void scan_files_piv(void) {
     file_scan_flash();
     file_t *ef = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_EF);
@@ -262,6 +341,15 @@ static void scan_files_piv(void) {
         const uint8_t ccc[] = { 0xF0, 0x00, 0xF1, 0x00, 0xF2, 0x00,
                                 0xF3, 0x00, 0xF4, 0x00, 0xF5, 0x01, 0x10 };
         file_put_data(ef, ccc, sizeof(ccc));
+    }
+    /* P1-5: initial CHUID with a non-government FASC-N, device-derived GUID
+       and a fixed expiration. Issuers can replace it through PUT DATA. */
+    if ((ef = file_search_by_fid(EF_PIV_CHUID, NULL, SPECIFY_ANY)) && !file_has_data(ef)) {
+        uint8_t chuid[64];
+        size_t chuid_len = piv_build_chuid(chuid, sizeof(chuid));
+        if (chuid_len > 0) {
+            file_put_data(ef, chuid, (uint16_t) chuid_len);
+        }
     }
     piv_protect_legacy_keys();
     piv_mgm_migrate();
