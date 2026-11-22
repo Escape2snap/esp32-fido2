@@ -267,12 +267,16 @@ static void scan_files_piv(void) {
         const uint8_t defpin[6] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36 };
         const uint8_t *random_dek = random_bytes_get(IV_SIZE + 32);
 
-        uint8_t def[DEK_FILE_SIZE];
-        def[0] = 0x3; // Format
+        uint8_t def[DEK_FILE_SIZE_PIV];
+        def[0] = 0x4; // PIN-wrapped copy + device-kbase recovery copy
 
         pin_derive_session(defpin, sizeof(defpin), session_pwpiv);
         encrypt_with_aad(session_pwpiv, random_dek, DEK_SIZE, PIN_KDF_DEFAULT_VERSION, def + 1);
         mbedtls_platform_zeroize(session_pwpiv, sizeof(session_pwpiv));
+        uint8_t kbase[32];
+        derive_kbase(kbase);
+        encrypt_with_aad(kbase, random_dek, DEK_SIZE, PIN_KDF_DEFAULT_VERSION, def + 1 + DEK_AAD_SIZE);
+        mbedtls_platform_zeroize(kbase, sizeof(kbase));
         file_put_data(ef, def, sizeof(def));
 
         uint8_t *key = (uint8_t *)"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08";
@@ -514,32 +518,82 @@ static bool piv_pin_matches(file_t *ef, const uint8_t *pin, size_t len) {
 
 /* Re-encrypt EF_DEK_PWPIV from the old PIN session key to the new one.
    Without this, every PIVKEY1-wrapped private key becomes undecryptable
-   after a PIN change. */
+   after a PIN change.  New cards store a second, device-kbase-wrapped copy
+   so RESET RETRY can recover the DEK even when the old PIN is unknown. */
 static int piv_rewrap_dek(const uint8_t *old_pin, size_t old_len,
                           const uint8_t *new_pin, size_t new_len) {
     file_t *ef = file_search_by_fid(EF_DEK_PWPIV, NULL, SPECIFY_ANY);
     if (!file_has_data(ef)) {
         return PICOKEYS_OK;
     }
-    if (file_get_size(ef) != DEK_FILE_SIZE || file_get_data(ef)[0] != 0x3) {
-        return PICOKEYS_ERR_NULL_PARAM;
-    }
+    uint8_t *in = file_get_data(ef);
+    uint16_t size = file_get_size(ef);
     uint8_t old_session[32], new_session[32];
     uint8_t dek[DEK_SIZE];
-    uint8_t out[DEK_FILE_SIZE];
+    uint8_t out[DEK_FILE_SIZE_PIV];
+    int r;
+    bool needs_kbase_copy = false;
+    if (in[0] == 0x3 && size == DEK_FILE_SIZE) {
+        needs_kbase_copy = true;
+    }
+    else if (in[0] == 0x4 && size == DEK_FILE_SIZE_PIV) {
+        memcpy(out + 1 + DEK_AAD_SIZE, in + 1 + DEK_AAD_SIZE, DEK_AAD_SIZE);
+    }
+    else {
+        return PICOKEYS_ERR_NULL_PARAM;
+    }
     pin_derive_session(old_pin, old_len, old_session);
-    int r = decrypt_with_aad(old_session, file_get_data(ef) + 1,
-                             DEK_AAD_SIZE, PIN_KDF_DEFAULT_VERSION, dek);
+    r = decrypt_with_aad(old_session, in + 1,
+                         DEK_AAD_SIZE, PIN_KDF_DEFAULT_VERSION, dek);
     if (r == 0) {
         pin_derive_session(new_pin, new_len, new_session);
-        out[0] = 0x3;
+        out[0] = 0x4;
+        r = encrypt_with_aad(new_session, dek, DEK_SIZE,
+                             PIN_KDF_DEFAULT_VERSION, out + 1);
+    }
+    if (r == 0 && needs_kbase_copy) {
+        uint8_t kbase[32];
+        derive_kbase(kbase);
+        r = encrypt_with_aad(kbase, dek, DEK_SIZE,
+                             PIN_KDF_DEFAULT_VERSION, out + 1 + DEK_AAD_SIZE);
+        mbedtls_platform_zeroize(kbase, sizeof(kbase));
+    }
+    if (r == 0) {
+        r = file_put_data(ef, out, sizeof(out));
+    }
+    mbedtls_platform_zeroize(old_session, sizeof(old_session));
+    mbedtls_platform_zeroize(new_session, sizeof(new_session));
+    mbedtls_platform_zeroize(dek, sizeof(dek));
+    return r;
+}
+
+/* Recover the DEK from the device-kbase copy and wrap it under a new PIN.
+   This is used by RESET RETRY, where the old PIN is deliberately unknown. */
+static int piv_rewrap_dek_from_kbase(const uint8_t *new_pin, size_t new_len) {
+    file_t *ef = file_search_by_fid(EF_DEK_PWPIV, NULL, SPECIFY_ANY);
+    if (!file_has_data(ef)) {
+        return PICOKEYS_OK;
+    }
+    uint8_t *in = file_get_data(ef);
+    if (file_get_size(ef) != DEK_FILE_SIZE_PIV || in[0] != 0x4) {
+        return PICOKEYS_ERR_NULL_PARAM;
+    }
+    uint8_t kbase[32], new_session[32], dek[DEK_SIZE];
+    uint8_t out[DEK_FILE_SIZE_PIV];
+    derive_kbase(kbase);
+    int r = decrypt_with_aad(kbase, in + 1 + DEK_AAD_SIZE,
+                             DEK_AAD_SIZE, PIN_KDF_DEFAULT_VERSION, dek);
+    if (r == 0) {
+        out[0] = 0x4;
+        memcpy(out + 1 + DEK_AAD_SIZE, in + 1 + DEK_AAD_SIZE, DEK_AAD_SIZE);
+        pin_derive_session(new_pin, new_len, new_session);
         r = encrypt_with_aad(new_session, dek, DEK_SIZE,
                              PIN_KDF_DEFAULT_VERSION, out + 1);
     }
     if (r == 0) {
         r = file_put_data(ef, out, sizeof(out));
     }
-    mbedtls_platform_zeroize(old_session, sizeof(old_session));
+    mbedtls_platform_zeroize(kbase, sizeof(kbase));
     mbedtls_platform_zeroize(new_session, sizeof(new_session));
     mbedtls_platform_zeroize(dek, sizeof(dek));
     return r;
@@ -1590,9 +1644,12 @@ static int cmd_piv_reset_retry(void) {
     if (!ef || file_put_data(ef, dhash, sizeof(dhash)) != PICOKEYS_OK) {
         return SW_MEMORY_FAILURE();
     }
+    int rewrap = piv_rewrap_dek_from_kbase(apdu.data + puk_data[0], pin_len);
+    if (rewrap != PICOKEYS_OK && rewrap != PICOKEYS_ERR_NULL_PARAM) {
+        return SW_EXEC_ERROR();
+    }
     /* RESET RETRY authenticates the PUK, not the new PIN.  Do not mark
-       the PIN security status as verified.  The PIN-encrypted DEK cannot
-       be re-wrapped here because the old PIN is unknown. */
+       the PIN security status as verified. */
     has_pwpiv = false;
     mbedtls_platform_zeroize(session_pwpiv, sizeof(session_pwpiv));
     pin_reset_retries(ef, true);
@@ -1647,8 +1704,9 @@ static int cmd_set_retries(void) {
     pin_reset_retries(ef, true);
 
     /* SET PIN RETRIES changes the PIN reference data; the caller has not
-       verified the new/default PIN.  The old PIN is unknown, so the DEK
-       cannot be re-wrapped here either. */
+       verified the new/default PIN.  Recover the DEK from the device copy
+       where available. */
+    (void) piv_rewrap_dek_from_kbase(def_pin, sizeof(def_pin));
     has_pwpiv = false;
     mbedtls_platform_zeroize(session_pwpiv, sizeof(session_pwpiv));
     flash_commit();

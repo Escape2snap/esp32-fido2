@@ -345,7 +345,10 @@ int load_dek(void) {
         file_t *ef_dek_pwpiv = file_search(EF_DEK_PWPIV);
         if (file_has_data(ef_dek_pwpiv)) {
             uint8_t *ef_data = file_get_data(ef_dek_pwpiv);
-            if (ef_data[0] == 0x3) { // Format
+            if (ef_data[0] == 0x3) { // Legacy PIN-only format
+                r = decrypt_with_aad(session_pwpiv, ef_data + 1, DEK_AAD_SIZE, PIN_KDF_DEFAULT_VERSION, dek);
+            }
+            else if (ef_data[0] == 0x4 && file_get_size(ef_dek_pwpiv) >= DEK_FILE_SIZE_PIV) {
                 r = decrypt_with_aad(session_pwpiv, ef_data + 1, DEK_AAD_SIZE, PIN_KDF_DEFAULT_VERSION, dek);
             }
             else {
