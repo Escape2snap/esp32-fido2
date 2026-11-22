@@ -230,22 +230,49 @@ static size_t piv_build_chuid(uint8_t *buf, size_t cap) {
     buf[n++] = 0x00;
     return n;
 }
+
+/* Write a PIV metadata entry.  meta_add() is the normal path, but after a
+   RESET it can return success while leaving EF_META unparsable.  Verify the
+   entry and fall back to a direct, minimally encoded TLV append. */
+static void piv_meta_append_raw(uint16_t fid, const uint8_t *data, uint16_t len) {
+    file_t *ef = file_search(EF_META);
+    if (!ef || len == 0 || len > 32) {
+        return;
+    }
+    uint16_t old_len = file_get_size(ef);
+    uint16_t total = (uint16_t) (old_len + 2 + 1 + 2 + len);
+    uint8_t *buf = (uint8_t *) calloc(1, total);
+    if (!buf) {
+        return;
+    }
+    if (old_len > 0 && file_get_data(ef)) {
+        memcpy(buf, file_get_data(ef), old_len);
+    }
+    uint8_t *p = buf + old_len;
+    *p++ = 0x9F;
+    *p++ = (uint8_t) (fid & 0xFF);
+    *p++ = (uint8_t) (len + 2);
+    *p++ = (uint8_t) (fid >> 8);
+    *p++ = (uint8_t) (fid & 0xFF);
+    memcpy(p, data, len);
+    if (file_put_data(ef, buf, total) != PICOKEYS_OK) {
+        free(buf);
+        return;
+    }
+    free(buf);
+}
+
+static void piv_meta_set(uint16_t fid, const uint8_t *data, uint16_t len) {
+    meta_add(fid, data, len);
+    uint8_t *stored = NULL;
+    if (meta_find(fid, &stored) > 0) {
+        return;
+    }
+    piv_meta_append_raw(fid, data, len);
+}
 static void piv_write_mgm_meta(uint8_t algo) {
     uint8_t meta[] = { algo, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS };
-    if (meta_add(EF_PIV_KEY_CARDMGM, meta, sizeof(meta)) == PICOKEYS_OK) {
-        return;
-    }
-    /* meta_add() can fail when EF_META was left empty by an interrupted
-       RESET.  Write the minimal single-entry EF_META record directly. */
-    file_t *ef_meta = file_search(EF_META);
-    if (!ef_meta) {
-        return;
-    }
-    uint8_t raw[8] = {
-        0x9F, 0x9B, 0x05, 0x00, 0x9B,
-        algo, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS
-    };
-    file_put_data(ef_meta, raw, sizeof(raw));
+    piv_meta_set(EF_PIV_KEY_CARDMGM, meta, sizeof(meta));
 }
 static void piv_seed_meta(void) {
     file_t *ef_meta = file_search(EF_META);
@@ -1212,7 +1239,7 @@ static int cmd_authenticate(void) {
         else {
             new_meta[1] = PINPOLICY_ONCE;
         }
-        meta_add(key_ref, new_meta, sizeof(new_meta));
+        piv_meta_set(key_ref, new_meta, sizeof(new_meta));
         meta_find(key_ref, &meta); // re-fetch updated meta
     }
     /* 9E Card Authentication is always available (NIST Table 4b). */
@@ -1426,7 +1453,7 @@ static int cmd_asym_keygen(void) {
         def_pinpol = PINPOLICY_NEVER;
     }
     uint8_t meta[] = {a80.data[0], asn1_len(&aaa) ? aaa.data[0] : def_pinpol, asn1_len(&aab) ? aab.data[0] : TOUCHPOLICY_ALWAYS, ORIGIN_GENERATED};
-    meta_add(key_ref, meta, sizeof(meta));
+    piv_meta_set(key_ref, meta, sizeof(meta));
     flash_commit();
     return SW_OK();
 }
@@ -1504,7 +1531,7 @@ static int cmd_set_mgmkey(void) {
     memcpy(new_meta, meta, 4);
     new_meta[0] = algo;
     new_meta[2] = touch;
-    meta_add(key_ref, new_meta, sizeof(new_meta));
+    piv_meta_set(key_ref, new_meta, sizeof(new_meta));
     flash_commit();
     return SW_OK();
 }
@@ -1609,7 +1636,7 @@ static int cmd_move_key(void) {
                 return SW_MEMORY_FAILURE();
             }
             memcpy(meta_copy, meta_src, (size_t)meta_len);
-            meta_add(to, meta_copy, (uint16_t)meta_len);
+            piv_meta_set(to, meta_copy, (uint16_t)meta_len);
             free(meta_copy);
         }
         else {
@@ -2026,7 +2053,7 @@ static int cmd_import_asym(void) {
         def_pinpol = PINPOLICY_NEVER;
     }
     uint8_t meta[] = { algo,  asn1_len(&aaa) ? aaa.data[0] : def_pinpol, asn1_len(&aab) ? aab.data[0] : TOUCHPOLICY_ALWAYS, ORIGIN_IMPORTED };
-    meta_add(key_ref, meta, sizeof(meta));
+    piv_meta_set(key_ref, meta, sizeof(meta));
     return SW_OK();
 }
 
