@@ -230,6 +230,54 @@ static size_t piv_build_chuid(uint8_t *buf, size_t cap) {
     buf[n++] = 0x00;
     return n;
 }
+static int piv_provision_default_mgm(void) {
+    const uint8_t key[24] = {
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08
+    };
+    file_t *ef = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_ANY);
+    int r = piv_mgm_store(key, sizeof(key));
+    if (r != PICOKEYS_OK && ef) {
+        /* Last-resort path for reset/scan when the kbase envelope cannot
+           be written.  piv_mgm_migrate() wraps it on the next scan. */
+        r = file_put_data(ef, key, sizeof(key));
+    }
+    if (r != PICOKEYS_OK) {
+        return r;
+    }
+    uint8_t meta[] = { PIV_ALGO_AES192, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS };
+    if (meta_add(EF_PIV_KEY_CARDMGM, meta, sizeof(meta)) != PICOKEYS_OK) {
+        return PICOKEYS_EXEC_ERROR;
+    }
+    return PICOKEYS_OK;
+}
+
+/* Repair cards that already have 9B data but lost its metadata (for
+   example an interrupted RESET before this fix).  Do not overwrite an
+   existing management key. */
+static void piv_ensure_mgm_meta(void) {
+    file_t *ef = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_ANY);
+    if (!file_has_data(ef)) {
+        piv_provision_default_mgm();
+        return;
+    }
+    uint8_t *meta = NULL;
+    if (meta_find(EF_PIV_KEY_CARDMGM, &meta) > 0) {
+        return;
+    }
+    uint8_t key[32];
+    size_t key_len = 0;
+    if (piv_mgm_load(key, sizeof(key), &key_len) != PICOKEYS_OK) {
+        piv_provision_default_mgm();
+        return;
+    }
+    mbedtls_platform_zeroize(key, sizeof(key));
+    uint8_t algo = key_len == 16 ? PIV_ALGO_AES128 :
+                   (key_len == 32 ? PIV_ALGO_AES256 : PIV_ALGO_3DES);
+    uint8_t new_meta[] = { algo, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS };
+    meta_add(EF_PIV_KEY_CARDMGM, new_meta, sizeof(new_meta));
+}
 static void scan_files_piv(void) {
     file_scan_flash();
     file_t *ef = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_EF);
@@ -279,15 +327,7 @@ static void scan_files_piv(void) {
         mbedtls_platform_zeroize(kbase, sizeof(kbase));
         file_put_data(ef, def, sizeof(def));
 
-        uint8_t *key = (uint8_t *)"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08";
-        file_t *ef_cardmgm = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_ANY);
-        if (piv_mgm_store(key, 24) != PICOKEYS_OK && ef_cardmgm) {
-            /* Last-resort provisioning path; the scan migration retries. */
-            file_put_data(ef_cardmgm, key, 24);
-        }
-        uint8_t meta[] = { PIV_ALGO_AES192, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS };
-        meta_add(EF_PIV_KEY_CARDMGM, meta, sizeof(meta));
-
+        piv_provision_default_mgm();
         reset_dek = true;
     }
     if ((ef = file_search_by_fid(EF_PIV_PIN, NULL, SPECIFY_ANY))) {
@@ -344,6 +384,7 @@ static void scan_files_piv(void) {
     }
     piv_protect_legacy_keys();
     piv_mgm_migrate();
+    piv_ensure_mgm_meta();
     flash_commit();
 }
 
@@ -1785,6 +1826,10 @@ static int cmd_reset(void) {
     }
     flash_commit();
     init_piv();
+    /* RESET must leave a usable default management key even if the
+       normal scan path was interrupted or its metadata write failed. */
+    piv_provision_default_mgm();
+    flash_commit();
     return SW_OK();
 }
 
