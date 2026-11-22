@@ -814,9 +814,9 @@ static int cmd_authenticate(void) {
                 return SW_INCORRECT_P1P2();
             }
             if (memcmp(a80.data, challenge, a80.len) == 0) {
+                /* Keep the challenge until the a81 response has been
+                   encrypted; A.2 uses one challenge for both TLVs. */
                 has_mgm = true;
-                has_challenge = false;
-                mbedtls_platform_zeroize(challenge, sizeof(challenge));
             }
         }
     }
