@@ -1571,11 +1571,14 @@ static int cmd_piv_change_pin(void) {
         found_old = true;
         size_t nlen = piv_normalize_pin(apdu.data + field, apdu.nc - field);
         if (nlen < 6 || nlen > 8 || !piv_pin_digits(apdu.data + field, nlen)) {
+            /* The old field may itself have been padded, so try a wider
+               field boundary before rejecting the new PIN. */
             new_invalid = true;
-            break;
+            continue;
         }
         new_start = field;
         new_len = nlen;
+        new_invalid = false;
         break;
     }
     if (!found_old) {
