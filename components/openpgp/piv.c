@@ -230,6 +230,23 @@ static size_t piv_build_chuid(uint8_t *buf, size_t cap) {
     buf[n++] = 0x00;
     return n;
 }
+static void piv_write_mgm_meta(uint8_t algo) {
+    uint8_t meta[] = { algo, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS };
+    if (meta_add(EF_PIV_KEY_CARDMGM, meta, sizeof(meta)) == PICOKEYS_OK) {
+        return;
+    }
+    /* meta_add() can fail when EF_META was left empty by an interrupted
+       RESET.  Write the minimal single-entry EF_META record directly. */
+    file_t *ef_meta = file_search(EF_META);
+    if (!ef_meta) {
+        return;
+    }
+    uint8_t raw[8] = {
+        0x9F, 0x9B, 0x05, 0x00, 0x9B,
+        algo, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS
+    };
+    file_put_data(ef_meta, raw, sizeof(raw));
+}
 static int piv_provision_default_mgm(void) {
     const uint8_t key[24] = {
         0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
@@ -246,10 +263,7 @@ static int piv_provision_default_mgm(void) {
     if (r != PICOKEYS_OK) {
         return r;
     }
-    uint8_t meta[] = { PIV_ALGO_AES192, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS };
-    if (meta_add(EF_PIV_KEY_CARDMGM, meta, sizeof(meta)) != PICOKEYS_OK) {
-        return PICOKEYS_EXEC_ERROR;
-    }
+    piv_write_mgm_meta(PIV_ALGO_AES192);
     return PICOKEYS_OK;
 }
 
@@ -275,8 +289,7 @@ static void piv_ensure_mgm_meta(void) {
     mbedtls_platform_zeroize(key, sizeof(key));
     uint8_t algo = key_len == 16 ? PIV_ALGO_AES128 :
                    (key_len == 32 ? PIV_ALGO_AES256 : PIV_ALGO_3DES);
-    uint8_t new_meta[] = { algo, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS };
-    meta_add(EF_PIV_KEY_CARDMGM, new_meta, sizeof(new_meta));
+    piv_write_mgm_meta(algo);
 }
 static void scan_files_piv(void) {
     file_scan_flash();
