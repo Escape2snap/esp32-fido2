@@ -29,6 +29,29 @@ int cmd_get_data(void) {
     if (!(ef = file_search_by_fid(fid, NULL, SPECIFY_EF))) {
         return SW_REFERENCE_NOT_FOUND();
     }
+    /* The EF table is shared with FIDO2/PIV.  Internal EF data contains
+       PIN hashes, authentication tokens, device keys, PIV PIN/PUK/DEK
+       material and PIV metadata; OpenPGP GET DATA must not expose it just
+       because its ACL is ACL_NONE.  Keep the legitimate OpenPGP internal
+       data objects available. */
+    if ((ef->type & FILE_TYPE_INTERNAL_EF) == FILE_TYPE_INTERNAL_EF) {
+        switch (fid) {
+            case EF_PW_STATUS:
+            case EF_PRIV_DO_1:
+            case EF_PRIV_DO_2:
+            case EF_PRIV_DO_3:
+            case EF_PRIV_DO_4:
+                break;
+            default:
+                return SW_REFERENCE_NOT_FOUND();
+        }
+    }
+    /* PIV FIDs are a different application namespace even when their EF
+       type is WORKING_EF.  Do not expose PIV key/certificate files through
+       OpenPGP GET DATA. */
+    if ((fid >= 0x0082 && fid <= 0x009e) || (fid >= 0xC100 && fid <= 0xC123)) {
+        return SW_REFERENCE_NOT_FOUND();
+    }
     if (fid == EF_PRIV_DO_3) {
         if (!has_pw2 && !has_pw3) {
             return SW_SECURITY_STATUS_NOT_SATISFIED();

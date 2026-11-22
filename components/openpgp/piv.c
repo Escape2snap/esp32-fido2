@@ -51,6 +51,24 @@
 #define PINPOLICY_ONCE 2
 #define PINPOLICY_ALWAYS 3
 
+/* PIV management authentication state.  A.1 and A.2 must never share a
+   challenge or a partially-validated state: doing so lets an A.1 plaintext
+   challenge be replayed as an A.2 witness. */
+enum {
+    PIV_AUTH_NONE = 0,
+    PIV_AUTH_A1 = 1,
+    PIV_AUTH_A2 = 2
+};
+static uint8_t challenge[16];
+static uint8_t challenge_len;
+static uint8_t auth_state;
+
+static void piv_auth_clear(void) {
+    auth_state = PIV_AUTH_NONE;
+    challenge_len = 0;
+    mbedtls_platform_zeroize(challenge, sizeof(challenge));
+}
+
 #define TOUCHPOLICY_DEFAULT 0
 #define TOUCHPOLICY_NEVER 1
 #define TOUCHPOLICY_ALWAYS 2
@@ -358,16 +376,16 @@ static int piv_store_cert(file_t *ef, const uint8_t *der, size_t der_len) {
 
 void init_piv(void) {
     scan_files_piv();
+    piv_auth_clear();
     has_pwpiv = false;
     // cmd_select();
 }
 
 extern bool has_mgm;
-extern bool has_challenge;
 
 static int piv_unload(void) {
     has_mgm = false;
-    has_challenge = false;
+    piv_auth_clear();
     has_pwpiv = false;
     return PICOKEYS_OK;
 }
@@ -729,8 +747,6 @@ static int cmd_get_metadata(void) {
     }
     return SW_OK();
 }
-uint8_t challenge[16];
-bool has_challenge = false;
 bool has_mgm = false;
 static int piv_key_establishment(uint8_t key_ref, uint8_t algo,
                                   const uint8_t *point, size_t point_len) {
@@ -797,6 +813,163 @@ static int piv_key_establishment(uint8_t key_ref, uint8_t algo,
     res_APDU_size = 4 + coord_len;
     return SW_OK();
 }
+
+static int piv_mgm_crypt(uint8_t algo, bool encrypt, const uint8_t *in,
+                         size_t len, uint8_t *out) {
+    if (len == 0 || len > sizeof(challenge)) {
+        return SW_INCORRECT_PARAMS();
+    }
+    uint8_t mgm[32];
+    size_t mgm_len = 0;
+    if (piv_mgm_load(mgm, sizeof(mgm), &mgm_len) != PICOKEYS_OK) {
+        return SW_MEMORY_FAILURE();
+    }
+    int r = 0;
+    if (algo == PIV_ALGO_3DES) {
+        if (mgm_len != 24 || len % 8 != 0) {
+            mbedtls_platform_zeroize(mgm, sizeof(mgm));
+            return SW_INCORRECT_P1P2();
+        }
+        mbedtls_des3_context ctx;
+        mbedtls_des3_init(&ctx);
+        r = encrypt ? mbedtls_des3_set3key_enc(&ctx, mgm)
+                    : mbedtls_des3_set3key_dec(&ctx, mgm);
+        if (r == 0) {
+            r = mbedtls_des3_crypt_ecb(&ctx, in, out);
+        }
+        mbedtls_des3_free(&ctx);
+    }
+    else if (algo == PIV_ALGO_AES128 || algo == PIV_ALGO_AES192 ||
+             algo == PIV_ALGO_AES256) {
+        size_t expected = algo == PIV_ALGO_AES128 ? 16 :
+                          (algo == PIV_ALGO_AES192 ? 24 : 32);
+        if (mgm_len != expected || len % 16 != 0) {
+            mbedtls_platform_zeroize(mgm, sizeof(mgm));
+            return SW_INCORRECT_P1P2();
+        }
+        mbedtls_aes_context ctx;
+        mbedtls_aes_init(&ctx);
+        r = encrypt ? mbedtls_aes_setkey_enc(&ctx, mgm, mgm_len * 8)
+                    : mbedtls_aes_setkey_dec(&ctx, mgm, mgm_len * 8);
+        if (r == 0) {
+            r = mbedtls_aes_crypt_ecb(&ctx,
+                                      encrypt ? MBEDTLS_AES_ENCRYPT : MBEDTLS_AES_DECRYPT,
+                                      in, out);
+        }
+        mbedtls_aes_free(&ctx);
+    }
+    else {
+        r = -1;
+    }
+    mbedtls_platform_zeroize(mgm, sizeof(mgm));
+    return r == 0 ? SW_OK() : SW_EXEC_ERROR();
+}
+
+/* A.1/A.2 management-key flows.  They deliberately use separate state:
+   an A.1 plaintext challenge must never be accepted as an A.2 witness. */
+static int piv_mgm_auth(uint8_t algo, asn1_ctx_t *a80, asn1_ctx_t *a81,
+                        asn1_ctx_t *a82) {
+    bool has80 = a80->data != NULL;
+    bool has81 = a81->data != NULL;
+    bool has82 = a82->data != NULL;
+    if (algo != PIV_ALGO_3DES && algo != PIV_ALGO_AES128 &&
+        algo != PIV_ALGO_AES192 && algo != PIV_ALGO_AES256) {
+        return SW_INCORRECT_P1P2();
+    }
+    uint8_t chal_len = algo == PIV_ALGO_3DES ? 8 : 16;
+    uint8_t block = algo == PIV_ALGO_3DES ? 8 : 16;
+    uint8_t tmp[16] = {0};
+
+    /* A.2 step 1: return the encrypted witness. */
+    if (has80 && a80->len == 0) {
+        if (has81 || has82) {
+            return SW_INCORRECT_PARAMS();
+        }
+        piv_auth_clear();
+        challenge_len = chal_len;
+        memcpy(challenge, random_bytes_get(chal_len), chal_len);
+        int r = piv_mgm_crypt(algo, true, challenge, chal_len, res_APDU + 4);
+        if (r != SW_OK()) {
+            piv_auth_clear();
+            return r;
+        }
+        res_APDU[0] = 0x7C;
+        res_APDU[1] = (uint8_t) (chal_len + 2);
+        res_APDU[2] = 0x80;
+        res_APDU[3] = chal_len;
+        res_APDU_size = 4 + chal_len;
+        auth_state = PIV_AUTH_A2;
+        return SW_OK();
+    }
+
+    /* A.1 step 1: return a plaintext challenge. */
+    if (has81 && a81->len == 0) {
+        if (has80 || has82) {
+            return SW_INCORRECT_PARAMS();
+        }
+        piv_auth_clear();
+        challenge_len = chal_len;
+        memcpy(challenge, random_bytes_get(chal_len), chal_len);
+        res_APDU[0] = 0x7C;
+        res_APDU[1] = (uint8_t) (chal_len + 2);
+        res_APDU[2] = 0x81;
+        res_APDU[3] = chal_len;
+        memcpy(res_APDU + 4, challenge, chal_len);
+        res_APDU_size = 4 + chal_len;
+        auth_state = PIV_AUTH_A1;
+        return SW_OK();
+    }
+
+    /* A.2 step 2: validate the witness, then encrypt the host challenge. */
+    if (has80) {
+        if (!has81 || a81->len == 0 || has82 ||
+            auth_state != PIV_AUTH_A2 ||
+            a80->len != challenge_len ||
+            memcmp(a80->data, challenge, challenge_len) != 0 ||
+            a81->len > sizeof(challenge) || a81->len % block != 0) {
+            piv_auth_clear();
+            return SW_INCORRECT_PARAMS();
+        }
+        int r = piv_mgm_crypt(algo, true, a81->data, a81->len, res_APDU + 4);
+        if (r != SW_OK()) {
+            piv_auth_clear();
+            return r;
+        }
+        res_APDU[0] = 0x7C;
+        res_APDU[1] = (uint8_t) (a81->len + 2);
+        res_APDU[2] = 0x82;
+        res_APDU[3] = a81->len;
+        res_APDU_size = 4 + a81->len;
+        has_mgm = true;
+        piv_auth_clear();
+        return SW_OK();
+    }
+
+    /* A.1 step 2: decrypt and verify the host response. */
+    if (has82 && a82->len > 0) {
+        if (has80 || has81 || auth_state != PIV_AUTH_A1 ||
+            a82->len != challenge_len) {
+            piv_auth_clear();
+            return SW_INCORRECT_PARAMS();
+        }
+        int r = piv_mgm_crypt(algo, false, a82->data, challenge_len, tmp);
+        if (r != SW_OK()) {
+            piv_auth_clear();
+            return r;
+        }
+        bool ok = memcmp(tmp, challenge, challenge_len) == 0;
+        mbedtls_platform_zeroize(tmp, sizeof(tmp));
+        piv_auth_clear();
+        if (!ok) {
+            return SW_INCORRECT_PARAMS();
+        }
+        has_mgm = true;
+        return SW_OK();
+    }
+
+    return SW_INCORRECT_PARAMS();
+}
+
 static int cmd_authenticate(void) {
     uint8_t algo = P1(apdu), key_ref = P2(apdu);
     if (apdu.nc == 0) {
@@ -849,7 +1022,6 @@ static int cmd_authenticate(void) {
         (!has_pwpiv && (key_ref == EF_PIV_KEY_AUTHENTICATION || key_ref == EF_PIV_KEY_SIGNATURE || key_ref == EF_PIV_KEY_KEYMGM || IS_RETIRED(key_ref)))) {
         return SW_SECURITY_STATUS_NOT_SATISFIED();
     }
-    uint8_t chal_len = (algo == PIV_ALGO_3DES ? sizeof(challenge) / 2 : sizeof(challenge));
     asn1_ctx_t ctxi, a7c = { 0 };
     asn1_ctx_init(apdu.data, (uint16_t)apdu.nc, &ctxi);
     if (!asn1_find_tag(&ctxi, 0x7C, &a7c) || asn1_len(&ctxi) == 0) {
@@ -866,264 +1038,72 @@ static int cmd_authenticate(void) {
     if (!a80.data && !a81.data && !a82.data) {
         return SW_INCORRECT_PARAMS();
     }
-    if (a80.data) {
-        if (a80.len == 0) {
-            memcpy(challenge, random_bytes_get(sizeof(challenge)), sizeof(challenge));
-            if (algo == PIV_ALGO_AES128 || algo == PIV_ALGO_AES192 || algo == PIV_ALGO_AES256 || algo == PIV_ALGO_3DES) {
-                if (key_ref != EF_PIV_KEY_CARDMGM) {
-                    return SW_INCORRECT_P1P2();
-                }
-                file_t *ef_mgm = file_search_by_fid(key_ref, NULL, SPECIFY_EF);
-                if (!file_has_data(ef_mgm)) {
-                    return SW_MEMORY_FAILURE();
-                }
-                uint8_t mgm[32];
-                size_t mgm_len = 0;
-                if (piv_mgm_load(mgm, sizeof(mgm), &mgm_len) != PICOKEYS_OK) {
-                    return SW_MEMORY_FAILURE();
-                }
-                res_APDU[res_APDU_size++] = 0x7C;
-                res_APDU[res_APDU_size++] = chal_len + 2;
-                res_APDU[res_APDU_size++] = 0x80;
-                res_APDU[res_APDU_size++] = chal_len;
-                int r = 0;
-                if (algo == PIV_ALGO_3DES) {
-                    mbedtls_des3_context ctx;
-                    mbedtls_des3_init(&ctx);
-                    r = mbedtls_des3_set3key_enc(&ctx, mgm);
-                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
-                    if (r != 0) {
-                        mbedtls_des3_free(&ctx);
-                        return SW_EXEC_ERROR();
-                    }
-                    r = mbedtls_des3_crypt_ecb(&ctx, challenge, res_APDU + res_APDU_size);
-                    res_APDU_size += chal_len;
-                    mbedtls_des3_free(&ctx);
-                }
-                else {
-                    mbedtls_aes_context ctx;
-                    mbedtls_aes_init(&ctx);
-                    r = mbedtls_aes_setkey_enc(&ctx, mgm, mgm_len * 8);
-                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
-                    if (r != 0) {
-                        mbedtls_aes_free(&ctx);
-                        return SW_EXEC_ERROR();
-                    }
-                    r = mbedtls_aes_crypt_ecb(&ctx, MBEDTLS_AES_ENCRYPT, challenge, res_APDU + res_APDU_size);
-                    res_APDU_size += chal_len;
-                    mbedtls_aes_free(&ctx);
-                }
-                if (r != 0) {
-                    return SW_EXEC_ERROR();
-                }
-                has_challenge = true;
-            }
+    if (key_ref == EF_PIV_KEY_CARDMGM) {
+        return piv_mgm_auth(algo, &a80, &a81, &a82);
+    }
+    if (a80.data || a82.data || !a81.data || a81.len == 0) {
+        return SW_INCORRECT_PARAMS();
+    }
+    file_t *ef_key = file_search_by_fid(key_ref == 0x93 ? EF_PIV_KEY_RETIRED18 : key_ref, NULL, SPECIFY_EF);
+    if (!file_has_data(ef_key)) {
+        return SW_MEMORY_FAILURE();
+    }
+    if (algo == PIV_ALGO_RSA1024 || algo == PIV_ALGO_RSA2048 || algo == PIV_ALGO_RSA3072 || algo == PIV_ALGO_RSA4096) {
+        mbedtls_rsa_context ctx;
+        mbedtls_rsa_init(&ctx);
+        int r = load_private_key_rsa(&ctx, ef_key, false);
+        if (r != PICOKEYS_OK) {
+            mbedtls_rsa_free(&ctx);
+            return SW_EXEC_ERROR();
+        }
+        size_t olen = mbedtls_rsa_get_len(&ctx);
+        if (algo == PIV_ALGO_RSA1024) {
+            memcpy(res_APDU, "\x7C\x81\x00\x82\x81\x00", 6);
+            res_APDU_size = 6;
         }
         else {
-            if (!has_challenge) {
-                return SW_INCORRECT_PARAMS();
-            }
-            if (!asn1_len(&a81)) {
-                return SW_INCORRECT_PARAMS();
-            }
-            if (key_ref != EF_PIV_KEY_CARDMGM) {
-                return SW_INCORRECT_P1P2();
-            }
-            if (memcmp(a80.data, challenge, a80.len) == 0) {
-                /* Keep the challenge until the a81 response has been
-                   encrypted; A.2 uses one challenge for both TLVs. */
-                has_mgm = true;
-            }
+            memcpy(res_APDU, "\x7C\x82\x00\x00\x82\x82\x00\x00", 8);
+            res_APDU_size = 8;
+        }
+        r = mbedtls_rsa_private(&ctx, random_fill_iterator, NULL, a81.data, res_APDU + res_APDU_size);
+        mbedtls_rsa_free(&ctx);
+        if (algo == PIV_ALGO_RSA1024) {
+            res_APDU[res_APDU_size - 1] = olen;
+            res_APDU[res_APDU_size - 4] = olen + 3;
+        }
+        else {
+            res_APDU[res_APDU_size - 2] = olen >> 8;
+            res_APDU[res_APDU_size - 1] = olen & 0xFF;
+            res_APDU[res_APDU_size - 6] = (olen + 4) >> 8;
+            res_APDU[res_APDU_size - 5] = (olen + 4) & 0xFF;
+        }
+        res_APDU_size += olen;
+        if (r != 0) {
+            return SW_EXEC_ERROR();
         }
     }
-    if (a81.data) {
-        if (!a81.len) {
-            memcpy(challenge, random_bytes_get(sizeof(challenge)), sizeof(challenge));
-            res_APDU[res_APDU_size++] = 0x7C;
-            res_APDU[res_APDU_size++] = chal_len + 2;
-            res_APDU[res_APDU_size++] = 0x81;
-            res_APDU[res_APDU_size++] = chal_len;
-            memcpy(res_APDU + res_APDU_size, challenge, chal_len);
-            res_APDU_size += chal_len;
-            has_challenge = true;
+    else if (algo == PIV_ALGO_ECCP256 || algo == PIV_ALGO_ECCP384) {
+        mbedtls_ecdsa_context ctx;
+        mbedtls_ecdsa_init(&ctx);
+        int r = load_private_key_ecdsa(&ctx, ef_key, false);
+        if (r != PICOKEYS_OK) {
+            mbedtls_ecdsa_free(&ctx);
+            return SW_EXEC_ERROR();
         }
-        else {
-            file_t *ef_key = file_search_by_fid(key_ref == 0x93 ? EF_PIV_KEY_RETIRED18 : key_ref, NULL, SPECIFY_EF);
-            if (!file_has_data(ef_key)) {
-                return SW_MEMORY_FAILURE();
-            }
-            if (algo == PIV_ALGO_RSA1024 || algo == PIV_ALGO_RSA2048 || algo == PIV_ALGO_RSA3072 || algo == PIV_ALGO_RSA4096) {
-                mbedtls_rsa_context ctx;
-                mbedtls_rsa_init(&ctx);
-                int r = load_private_key_rsa(&ctx, ef_key, false);
-                if (r != PICOKEYS_OK) {
-                    mbedtls_rsa_free(&ctx);
-                    return SW_EXEC_ERROR();
-                }
-                size_t olen = mbedtls_rsa_get_len(&ctx);
-                if (algo == PIV_ALGO_RSA1024) {
-                    memcpy(res_APDU, "\x7C\x81\x00\x82\x81\x00", 6);
-                    res_APDU_size = 6;
-                }
-                else {
-                    memcpy(res_APDU, "\x7C\x82\x00\x00\x82\x82\x00\x00", 8);
-                    res_APDU_size = 8;
-                }
-                r = mbedtls_rsa_private(&ctx, random_fill_iterator, NULL, a81.data, res_APDU + res_APDU_size);
-                mbedtls_rsa_free(&ctx);
-                if (algo == PIV_ALGO_RSA1024) {
-                    res_APDU[res_APDU_size - 1] = olen;
-                    res_APDU[res_APDU_size - 4] = olen + 3;
-                }
-                else {
-                    res_APDU[res_APDU_size - 2] = olen >> 8;
-                    res_APDU[res_APDU_size - 1] = olen & 0xFF;
-                    res_APDU[res_APDU_size - 6] = (olen + 4) >> 8;
-                    res_APDU[res_APDU_size - 5] = (olen + 4) & 0xFF;
-                }
-                res_APDU_size += olen;
-                if (r != 0) {
-                    return SW_EXEC_ERROR();
-                }
-            }
-            else if (algo == PIV_ALGO_ECCP256 || algo == PIV_ALGO_ECCP384) {
-                mbedtls_ecdsa_context ctx;
-                mbedtls_ecdsa_init(&ctx);
-                int r = load_private_key_ecdsa(&ctx, ef_key, false);
-                if (r != PICOKEYS_OK) {
-                    mbedtls_ecdsa_free(&ctx);
-                    return SW_EXEC_ERROR();
-                }
-                size_t olen = 0;
-                memcpy(res_APDU, "\x7C\x00\x82\x00", 4);
-                res_APDU_size = 4;
-                r = mbedtls_ecdsa_write_signature(&ctx, algo == PIV_ALGO_ECCP256 ? MBEDTLS_MD_SHA256 : MBEDTLS_MD_SHA384, a81.data, a81.len, res_APDU + res_APDU_size, MBEDTLS_ECDSA_MAX_LEN, &olen, random_fill_iterator, NULL);
-                mbedtls_ecdsa_free(&ctx);
-                res_APDU[res_APDU_size - 1] = olen;
-                res_APDU[res_APDU_size - 3] = olen + 2;
-                res_APDU_size += olen;
-                if (r != 0) {
-                    return SW_EXEC_ERROR();
-                }
-            }
-            else if (algo == PIV_ALGO_AES128 || algo == PIV_ALGO_AES192 || algo == PIV_ALGO_AES256 || algo == PIV_ALGO_3DES) {
-                if (!has_challenge || key_ref != EF_PIV_KEY_CARDMGM) {
-                    return SW_INCORRECT_PARAMS();
-                }
-                uint8_t mgm[32];
-                size_t mgm_len = 0;
-                if (piv_mgm_load(mgm, sizeof(mgm), &mgm_len) != PICOKEYS_OK) {
-                    return SW_MEMORY_FAILURE();
-                }
-                if ((algo == PIV_ALGO_3DES && a81.len % 8 != 0) ||
-                    (algo != PIV_ALGO_3DES && a81.len % 16 != 0)) {
-                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
-                    return SW_DATA_INVALID();
-                }
-                res_APDU[0] = 0x7C;
-                res_APDU[1] = (uint8_t) (a81.len + 2);
-                res_APDU[2] = 0x82;
-                res_APDU[3] = (uint8_t) a81.len;
-                res_APDU_size = 4;
-                int r = 0;
-                if (algo == PIV_ALGO_3DES) {
-                    mbedtls_des3_context ctx;
-                    mbedtls_des3_init(&ctx);
-                    r = mbedtls_des3_set3key_enc(&ctx, mgm);
-                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
-                    if (r != 0) {
-                        mbedtls_des3_free(&ctx);
-                        return SW_EXEC_ERROR();
-                    }
-                    r = mbedtls_des3_crypt_ecb(&ctx, a81.data, res_APDU + res_APDU_size);
-                    mbedtls_des3_free(&ctx);
-                }
-                else {
-                    mbedtls_aes_context ctx;
-                    mbedtls_aes_init(&ctx);
-                    r = mbedtls_aes_setkey_enc(&ctx, mgm, mgm_len * 8);
-                    mbedtls_platform_zeroize(mgm, sizeof(mgm));
-                    if (r != 0) {
-                        mbedtls_aes_free(&ctx);
-                        return SW_EXEC_ERROR();
-                    }
-                    r = mbedtls_aes_crypt_ecb(&ctx, MBEDTLS_AES_ENCRYPT, a81.data, res_APDU + res_APDU_size);
-                    mbedtls_aes_free(&ctx);
-                }
-                if (r != 0) {
-                    return SW_EXEC_ERROR();
-                }
-                res_APDU_size += a81.len;
-                has_challenge = false;
-                mbedtls_platform_zeroize(challenge, sizeof(challenge));
-            }
+        size_t olen = 0;
+        memcpy(res_APDU, "\x7C\x00\x82\x00", 4);
+        res_APDU_size = 4;
+        r = mbedtls_ecdsa_write_signature(&ctx, algo == PIV_ALGO_ECCP256 ? MBEDTLS_MD_SHA256 : MBEDTLS_MD_SHA384, a81.data, a81.len, res_APDU + res_APDU_size, MBEDTLS_ECDSA_MAX_LEN, &olen, random_fill_iterator, NULL);
+        mbedtls_ecdsa_free(&ctx);
+        res_APDU[res_APDU_size - 1] = olen;
+        res_APDU[res_APDU_size - 3] = olen + 2;
+        res_APDU_size += olen;
+        if (r != 0) {
+            return SW_EXEC_ERROR();
         }
     }
-    if (a82.data) {
-        if (!a82.len) {
-            // Should be handled by a81 or a80
-        }
-        else {
-            if (key_ref != EF_PIV_KEY_CARDMGM) {
-                return SW_INCORRECT_P1P2();
-            }
-            if (!has_challenge) {
-                return SW_INCORRECT_PARAMS();
-            }
-            if (chal_len != a82.len) {
-                return SW_DATA_INVALID();
-            }
-            file_t *ef_key = file_search_by_fid(key_ref, NULL, SPECIFY_EF);
-            if (!file_has_data(ef_key)) {
-                return SW_MEMORY_FAILURE();
-            }
-            uint8_t mgm[32];
-            size_t key_len = 0;
-            if (piv_mgm_load(mgm, sizeof(mgm), &key_len) != PICOKEYS_OK) {
-                return SW_MEMORY_FAILURE();
-            }
-            int r = 0;
-            if (algo == PIV_ALGO_3DES)
-            {
-                mbedtls_des3_context ctx;
-                mbedtls_des3_init(&ctx);
-                r = mbedtls_des3_set3key_dec(&ctx, mgm);
-                mbedtls_platform_zeroize(mgm, sizeof(mgm));
-                if (r != 0) {
-                    mbedtls_des3_free(&ctx);
-                    return SW_EXEC_ERROR();
-                }
-                r = mbedtls_des3_crypt_ecb(&ctx, a82.data, res_APDU);
-                mbedtls_des3_free(&ctx);
-            }
-            else {
-                mbedtls_aes_context ctx;
-                mbedtls_aes_init(&ctx);
-                r = mbedtls_aes_setkey_dec(&ctx, mgm, key_len * 8);
-                mbedtls_platform_zeroize(mgm, sizeof(mgm));
-                if (r != 0) {
-                    mbedtls_aes_free(&ctx);
-                    return SW_EXEC_ERROR();
-                }
-                r = mbedtls_aes_crypt_ecb(&ctx, MBEDTLS_AES_DECRYPT, a82.data, res_APDU);
-                mbedtls_aes_free(&ctx);
-            }
-            if (r != 0) {
-                return SW_EXEC_ERROR();
-            }
-            if (memcmp(res_APDU, challenge, chal_len) != 0) {
-                has_challenge = false;
-                mbedtls_platform_zeroize(challenge, sizeof(challenge));
-                return SW_DATA_INVALID();
-            }
-            /* OpenSC uses a81 (challenge) + a82 (response) for external
-               authentication. The old code only set this in the a80 branch,
-               so a successful 9B login returned 9000 but the following
-               GENERATE was rejected with 69 82. */
-            has_mgm = true;
-            has_challenge = false;
-            mbedtls_platform_zeroize(challenge, sizeof(challenge));
-        }
+    else {
+        return SW_INCORRECT_P1P2();
     }
     /* GENERAL AUTHENTICATE is not a PIN command: never clear has_pwpiv
        here (9B's meta PIN policy is ALWAYS, which used to log the PIN out
@@ -1556,7 +1536,11 @@ static int cmd_set_retries(void) {
 
 static void piv_delete_fid(uint16_t fid) {
     file_t *ef = file_search(fid);
-    if (ef) {
+    /* FILE_DATA_FUNC entries store a function pointer in ->data, not a
+       flash address.  file_delete()/flash_clear_file() would treat that
+       pointer as a flash record and corrupt memory.  Static function-backed
+       objects (e.g. Discovery 7E) must never be deleted. */
+    if (ef && (ef->type & FILE_DATA_FUNC) != FILE_DATA_FUNC) {
         file_delete(ef);
     }
 }
@@ -1598,7 +1582,6 @@ static int cmd_reset(void) {
     }
     piv_delete_fid(EF_PIV_PIN);
     piv_delete_fid(EF_PIV_PUK);
-    piv_delete_fid(EF_PIV_DISCOVERY);
     piv_delete_fid(EF_PIV_BITGT);
     piv_delete_fid(EF_PIV_KEY_ATTESTATION);
     /* The shared PW_PRIV file is intentionally not deleted; reset only the
