@@ -896,7 +896,14 @@ int store_keys_piv(void *key_ctx, int type, uint16_t key_id) {
         mbedtls_platform_zeroize(kdata, sizeof(kdata));
         return r;
     }
-    r = piv_key_protect(kdata, key_size, wrapped, sizeof(wrapped), &wrapped_len);
+    /* 9E Card Authentication must work without a PIN, so its private key
+       must never be wrapped with the PIN/DEK envelope.  Force kbase for 9E. */
+    if (key_id == EF_PIV_KEY_CARDAUTH) {
+        r = piv_key_protect_kbase(kdata, key_size, wrapped, sizeof(wrapped), &wrapped_len);
+    }
+    else {
+        r = piv_key_protect(kdata, key_size, wrapped, sizeof(wrapped), &wrapped_len);
+    }
     mbedtls_platform_zeroize(kdata, sizeof(kdata));
     if (r != PICOKEYS_OK) {
         mbedtls_platform_zeroize(wrapped, sizeof(wrapped));
