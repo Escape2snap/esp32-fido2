@@ -732,6 +732,71 @@ static int cmd_get_metadata(void) {
 uint8_t challenge[16];
 bool has_challenge = false;
 bool has_mgm = false;
+static int piv_key_establishment(uint8_t key_ref, uint8_t algo,
+                                  const uint8_t *point, size_t point_len) {
+    if (key_ref != EF_PIV_KEY_KEYMGM && !IS_RETIRED(key_ref)) {
+        return SW_INCORRECT_PARAMS();
+    }
+    mbedtls_ecp_group_id gid;
+    size_t coord_len;
+    if (algo == PIV_ALGO_ECCP256) {
+        gid = MBEDTLS_ECP_DP_SECP256R1;
+        coord_len = 32;
+    }
+    else if (algo == PIV_ALGO_ECCP384) {
+        gid = MBEDTLS_ECP_DP_SECP384R1;
+        coord_len = 48;
+    }
+    else {
+        return SW_INCORRECT_P1P2();
+    }
+    if (point_len != 1 + 2 * coord_len || point[0] != 0x04) {
+        return SW_INCORRECT_PARAMS();
+    }
+    file_t *ef_key = file_search_by_fid(key_ref == 0x93 ? EF_PIV_KEY_RETIRED18 : key_ref, NULL, SPECIFY_EF);
+    if (!file_has_data(ef_key)) {
+        return SW_MEMORY_FAILURE();
+    }
+    mbedtls_ecdsa_context ctx;
+    mbedtls_ecdsa_init(&ctx);
+    int r = load_private_key_ecdsa(&ctx, ef_key, false);
+    if (r != PICOKEYS_OK) {
+        mbedtls_ecdsa_free(&ctx);
+        return SW_FUNC_NOT_SUPPORTED();
+    }
+    if (ctx.grp.id != gid) {
+        mbedtls_ecdsa_free(&ctx);
+        return SW_INCORRECT_P1P2();
+    }
+    mbedtls_ecp_point Q, R;
+    mbedtls_ecp_point_init(&Q);
+    mbedtls_ecp_point_init(&R);
+    r = mbedtls_ecp_point_read_binary(&ctx.grp, &Q, point, point_len);
+    if (r == 0) {
+        r = mbedtls_ecp_check_pubkey(&ctx.grp, &Q);
+    }
+    if (r == 0) {
+        r = mbedtls_ecp_mul(&ctx.grp, &R, &ctx.d, &Q, random_fill_iterator, NULL);
+    }
+    if (r == 0) {
+        res_APDU[0] = 0x7C;
+        res_APDU[1] = (uint8_t) (coord_len + 2);
+        res_APDU[2] = 0x82;
+        res_APDU[3] = (uint8_t) coord_len;
+        r = mbedtls_mpi_write_binary(&R.X, res_APDU + 4, coord_len);
+    }
+    else {
+        r = -1;
+    }
+    mbedtls_ecp_point_free(&R);
+    mbedtls_ecp_point_free(&Q);
+    mbedtls_ecdsa_free(&ctx);
+    if (r != 0) {
+        return SW_DATA_INVALID();
+    }
+    res_APDU_size = 4 + coord_len;
+    return SW_OK();
+}
 static int cmd_authenticate(void) {
     uint8_t algo = P1(apdu), key_ref = P2(apdu);
     if (apdu.nc == 0) {
@@ -796,13 +861,7 @@ static int cmd_authenticate(void) {
     asn1_find_tag(&a7c, 0x82, &a82);
     asn1_find_tag(&a7c, 0x85, &a85);
     if (a85.data) {
-        /* Key establishment is only defined for 9D/retired keys.  The ECDH
-           operation itself is not implemented yet; return 6A81 instead of a
-           silent 9000 empty response. */
-        if (key_ref != EF_PIV_KEY_KEYMGM && !IS_RETIRED(key_ref)) {
-            return SW_INCORRECT_PARAMS();
-        }
-        return SW_FUNC_NOT_SUPPORTED();
+        return piv_key_establishment(key_ref, algo, a85.data, a85.len);
     }
     if (!a80.data && !a81.data && !a82.data) {
         return SW_INCORRECT_PARAMS();
