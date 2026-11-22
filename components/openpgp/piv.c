@@ -169,9 +169,9 @@ static size_t piv_build_chuid(uint8_t *buf, size_t cap) {
     if (cap < 64) {
         return 0;
     }
-    /* PIV-I style non-federal placeholder. The real FASC-N, GUID and
-       issuer signature are provisioning data; this keeps OpenSC serial
-       working and gives PACS a stable placeholder identity. */
+    /* PIV-I style placeholder. Only the GUID is unique; the FASC-N,
+       expiration and 3E signature are issuer provisioning data. This makes
+       OpenSC serial work, but it is not a production PACS credential. */
     static const uint8_t fascn[25] = {
         0xD4, 0xE7, 0x39, 0xDA, 0x73, 0x9C, 0xED, 0x39, 0xCE, 0x73,
         0x9D, 0x83, 0x60, 0xD8, 0x21, 0x08, 0x42, 0x10, 0x84, 0x21,
@@ -310,8 +310,9 @@ static void scan_files_piv(void) {
                                 0xF3, 0x00, 0xF4, 0x00, 0xF5, 0x01, 0x10 };
         file_put_data(ef, ccc, sizeof(ccc));
     }
-    /* P1-5: initial CHUID with a non-government FASC-N, device-derived GUID
-       and a fixed expiration. Issuers can replace it through PUT DATA. */
+    /* P1-5: OpenSC-readable CHUID placeholder with a random persisted GUID
+       and PIV-I style FASC-N. Issuers must replace the FASC-N, expiration and
+       3E signature through PUT DATA for production PACS use. */
     if ((ef = file_search_by_fid(EF_PIV_CHUID, NULL, SPECIFY_ANY)) && !file_has_data(ef)) {
         uint8_t chuid[64];
         size_t chuid_len = piv_build_chuid(chuid, sizeof(chuid));
