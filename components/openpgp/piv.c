@@ -800,8 +800,15 @@ static int cmd_get_metadata(void) {
     }
     if (key_ref != EF_PIV_PIN && key_ref != EF_PIV_PUK) {
         int meta_len = 0;
+        uint8_t fallback_mgm_meta[3] = { PIV_ALGO_3DES, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS };
         if ((meta_len = meta_find(key_ref, &meta)) <= 0) {
-            return SW_REFERENCE_NOT_FOUND();
+            if (key_ref == EF_PIV_KEY_CARDMGM) {
+                meta = fallback_mgm_meta;
+                meta_len = sizeof(fallback_mgm_meta);
+            }
+            else {
+                return SW_REFERENCE_NOT_FOUND();
+            }
         }
         res_APDU[res_APDU_size++] = 0x1;
         res_APDU[res_APDU_size++] = 1;
@@ -1170,8 +1177,18 @@ static int cmd_authenticate(void) {
     }
     uint8_t *meta = NULL;
     int meta_len = 0;
+    uint8_t fallback_mgm_meta[3] = { PIV_ALGO_3DES, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS };
     if ((meta_len = meta_find(key_ref, &meta)) <= 0) {
-        return SW_REFERENCE_NOT_FOUND();
+        /* Never leave a card unadministrable because EF_META was left
+           empty by an interrupted RESET.  Authentication is still gated by
+           the actual 9B key material. */
+        if (key_ref == EF_PIV_KEY_CARDMGM) {
+            meta = fallback_mgm_meta;
+            meta_len = sizeof(fallback_mgm_meta);
+        }
+        else {
+            return SW_REFERENCE_NOT_FOUND();
+        }
     }
     if (meta[1] == PINPOLICY_DEFAULT) {
         uint8_t new_meta[4];
