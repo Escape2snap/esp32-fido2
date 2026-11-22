@@ -4,7 +4,7 @@ ESP32-FIDO2 turns an **ESP32-S3** into a USB security key that combines:
 
 - **FIDO2 / CTAP 2.1 / U2F** — WebAuthn, resident credentials, PIN/UV
 - **OpenPGP card v3.4** — GnuPG, SSH, S/MIME, PSO:CDS and PSO:DEC
-- **PIV** — Yubico-compatible PIV applet (management-key protected)
+- **PIV** — OpenSC/PIV-tool compatible applet; PACS deployment requires issuer provisioning
 
 The firmware is a standalone ESP-IDF project built on
 [pico-keys-sdk](https://github.com/polhenarejos/pico-keys-sdk). It does
@@ -17,17 +17,18 @@ not target the Raspberry Pi Pico.
 | FIDO2 / WebAuthn / U2F | Working |
 | OpenPGP RSA / NIST ECC | Working |
 | OpenPGP Ed25519 / X25519 | Working (hardware-tested) |
-| PIV | Working (management-key protected) |
+| PIV | Working with OpenSC/PIV tooling; PACS requires issuer provisioning |
 | OATH TOTP/HOTP | Not built (applet removed) |
 | Yubico OTP | Not implemented |
 | Windows CCID + HID | Working; one reconnect may be needed after first enumeration |
 
 Hardware-verified on an ESP32-S3 + Windows host:
 
-- FIDO2 WebAuthn registration and login
+- FIDO2 WebAuthn registration and login; raw CTAP2 makeCredential/getAssertion
 - OpenPGP Ed25519 key generation and signing
 - cv25519/X25519 PSO:DEC decryption, including the OpenPGP `0x40` Montgomery prefix
-- GnuPG `--card-status`, PIN verification and key generation
+- GnuPG `--card-status`, EdDSA sign/verify and cv25519 encrypt/decrypt with card keys
+- PIV padded PIN VERIFY/CHANGE, A.1/A.2 management auth, 9C PIN-Always, P-256/P-384 ECDH and RESET
 
 ## Feature Matrix
 
@@ -208,6 +209,40 @@ Notes:
   AUT and cv25519 for DEC before generating.
 - The CCID path keeps the Windows-compatible `dwFeatures = 0x40840` value.
 
+### PIV
+
+OpenSC/`piv-tool` can select the PIV application, read the CHUID serial,
+authenticate the 9B management key and use the PIV key slots. PIV is an
+independent application: a PIV RESET does not erase OpenPGP or FIDO2 data.
+
+Factory PIV secrets:
+
+| Secret | Default |
+|--------|---------|
+| PIV PIN | `123456` |
+| PIV PUK | `12345678` |
+| 9B management key | `0102030405060708` repeated three times (3DES) |
+
+Change the PIN, PUK and management key during provisioning. OpenSC/Yubico
+tools may send 8-byte PINs padded with `FF`; the firmware normalizes this
+to the configured 6-8 digit PIN before verification and key derivation.
+
+```bash
+piv-tool --serial
+piv-tool -A A:9B:03
+```
+
+PIV RESET (`00 FB 00 00`) is intentionally unauthenticated, matching
+Yubico behavior, but succeeds only when the PIN or PUK is blocked. It
+wipes PIV keys, certificates and CHUID data, restores the default PIV
+PIN/PUK/9B management key and leaves OpenPGP/FIDO2 data untouched.
+
+PIV CHUID is an OpenSC-readable placeholder: a PIV-I-style FASC-N, a
+random persistent UUIDv4, ASCII expiration and empty `3E`/`FE` fields.
+Production PACS use requires an issuer to replace the FASC-N, expiration
+and `3E` CMS signature via PUT DATA. PIV touch policy is stored and
+reported but is not yet enforced for user-selected ALWAYS/CACHED policies.
+
 ### FIDO2
 
 ```bash
@@ -336,24 +371,26 @@ the limit.
 random 32-byte device salt (first boot)
   + chip serial or optional OTP key
     -> HKDF-SHA256("DEVICE/ROOT")
-      -> device master key (keydev), encrypted in flash
-        -> AES-GCM/ChaCha20-Poly1305
-          -> encrypted private keys and credentials in flash
+      -> kbase (device-bound root)
+        -> PIVKEY2 and 9B management-key envelopes (AES-CFB)
+        -> separate keydev, stored encrypted under kbase
+           -> FIDO credential secrets
 ```
 
-OpenPGP private keys are encrypted with the DEK, and FIDO credential
-secrets are encrypted with the device key. PIV private keys are wrapped in
-a `PIVKEY1` (DEK) or `PIVKEY2` (device-bound `kbase`) envelope; the
-latter keeps raw keys off flash when only the PIV management key is
-available, but it is **not PIN-protected** — a full flash dump can derive
-`kbase`. The PIV management key (0x9B) is also wrapped with `kbase`
-and unwrapped only for authentication. Enable Secure Boot and Flash
-Encryption before production, or add a
-PIV-PIN-wrapped KEK. On the first PIV scan after an upgrade, legacy
-plaintext PIV private-key files are wrapped once; a file that cannot be
-wrapped is left untouched. The optional OTP key adds entropy; without it,
-physical flash readout plus the chip serial number is sufficient to
-attempt an offline brute-force of the device root.
+The PIV PIN derives a session key which wraps `EF_DEK_PWPIV`; that DEK
+protects `PIVKEY1` private keys. New PIV DEK records also store a
+device-`kbase` recovery copy so a PUK reset can re-wrap the DEK without
+the old PIN. OpenPGP uses its own PIN-derived DEK records. Symmetric
+envelopes use AES-GCM or AES-CFB depending on the object; there is no
+ChaCha20-Poly1305 in the current PIV/OpenPGP key envelopes.
+
+`PIVKEY2` and the 9B management-key envelope are bound to `kbase`,
+not to the PIV PIN. They keep raw keys off flash and require the device
+root to unwrap, but a full flash dump plus the chip serial (and no OTP
+key) still allows an offline attempt against `kbase`. Enable Secure Boot
+and Flash Encryption before production. On the first PIV scan after an
+upgrade, legacy plaintext PIV private-key files are wrapped once; a file
+that cannot be wrapped is left untouched.
 
 ### PIN / DEK Flow
 
@@ -363,13 +400,18 @@ user PIN -> KDF -> DEK -> decrypt private key
 
 The DEK is derived in RAM and is never exported.
 
-### Security-Related Behavior Changes (PR #60)
+### Security-Related Behavior Changes (PR #60 and later)
 
 - `GET BULK DATA` (0xCE) is disabled.
-- PIV `SET RETRIES`/`RESET`/`PUT DATA` require the management key;
+- PIV `SET RETRIES` and `PUT DATA` require the management key;
   OpenPGP `IMPORT DATA` requires PW3.
-- `PIV RESET` only removes PIV objects (it no longer erases OpenPGP or
-  FIDO2 data).
+- `PIV RESET` is unauthenticated (Yubico behavior) but succeeds only
+  when the PIN or PUK is blocked. It removes PIV objects and restores
+  the default PIV PIN/PUK/9B key; it does not erase OpenPGP or FIDO2 data.
+- PIV A.1/A.2 challenge state is isolated; a failed VERIFY clears the
+  PIV authentication state; CCID ICC power-off also clears it.
+- PIV PIN-protected containers (fingerprints, facial image, printed
+  information, iris, pairing reference) require PIN verification.
 - Rescue PHY writes and `KEYDEV_SIGN` are compile-gated; enable them with
   `-DPICOKEYS_ENABLE_RESCUE_DEBUG=1` for provisioning builds.
 - Concurrent CBOR requests are rejected with `CHANNEL_BUSY` while the
@@ -454,6 +496,10 @@ Commits should be signed (`git commit -S -s`) and use English messages.
 - #58: X25519 PSO:DEC `0x40` prefix
 - #59: merge Ed25519/X25519 into main
 - #60: security hardening for APDU/PIV/FIDO boundaries and Phase 0 build cleanup
+- #61: PIV private-key/management-key envelopes and OpenSC interop
+- #62: OpenSC-readable PIV CHUID placeholder with random persistent GUID
+- #63: PIV ECC CDH key establishment (P-256/P-384)
+- #64: PIV auth bypass, RESET, PIN/DEK and metadata hardening
 
 Do not remove the CCID `0x40` compatibility bit.
 
