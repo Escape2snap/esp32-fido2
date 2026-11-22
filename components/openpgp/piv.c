@@ -495,6 +495,55 @@ static bool piv_pin_digits(const uint8_t *pin, size_t len) {
     return true;
 }
 
+
+static size_t piv_normalize_pin(const uint8_t *pin, size_t len) {
+    while (len > 6 && pin[len - 1] == 0xFF) {
+        len--;
+    }
+    return len;
+}
+
+static bool piv_pin_matches(file_t *ef, const uint8_t *pin, size_t len) {
+    if (!ef || !file_has_data(ef) || len < 1) {
+        return false;
+    }
+    uint8_t hash[32];
+    pin_derive_verifier(pin, len, hash);
+    return memcmp(file_get_data(ef) + 2, hash, sizeof(hash)) == 0;
+}
+
+/* Re-encrypt EF_DEK_PWPIV from the old PIN session key to the new one.
+   Without this, every PIVKEY1-wrapped private key becomes undecryptable
+   after a PIN change. */
+static int piv_rewrap_dek(const uint8_t *old_pin, size_t old_len,
+                          const uint8_t *new_pin, size_t new_len) {
+    file_t *ef = file_search_by_fid(EF_DEK_PWPIV, NULL, SPECIFY_ANY);
+    if (!file_has_data(ef)) {
+        return PICOKEYS_OK;
+    }
+    if (file_get_size(ef) != DEK_FILE_SIZE || file_get_data(ef)[0] != 0x3) {
+        return PICOKEYS_ERR_NULL_PARAM;
+    }
+    uint8_t old_session[32], new_session[32];
+    uint8_t dek[DEK_SIZE];
+    uint8_t out[DEK_FILE_SIZE];
+    pin_derive_session(old_pin, old_len, old_session);
+    int r = decrypt_with_aad(old_session, file_get_data(ef) + 1,
+                             DEK_AAD_SIZE, PIN_KDF_DEFAULT_VERSION, dek);
+    if (r == 0) {
+        pin_derive_session(new_pin, new_len, new_session);
+        out[0] = 0x3;
+        r = encrypt_with_aad(new_session, dek, DEK_SIZE,
+                             PIN_KDF_DEFAULT_VERSION, out + 1);
+    }
+    if (r == 0) {
+        r = file_put_data(ef, out, sizeof(out));
+    }
+    mbedtls_platform_zeroize(old_session, sizeof(old_session));
+    mbedtls_platform_zeroize(new_session, sizeof(new_session));
+    mbedtls_platform_zeroize(dek, sizeof(dek));
+    return r;
+}
 static int cmd_piv_verify(void) {
     uint8_t key_ref = P2(apdu);
     if (P1(apdu) != 0x00 && P1(apdu) != 0xFF) {
@@ -521,15 +570,21 @@ static int cmd_piv_verify(void) {
         return SW_OK();
     }
     if (apdu.nc > 0) {
-        bool legacy_padded = (apdu.nc == 8 && apdu.data[6] == 0xFF && apdu.data[7] == 0xFF);
-        if (!piv_pin_digits(apdu.data, apdu.nc) && !legacy_padded) {
+        size_t pin_len = piv_normalize_pin(apdu.data, apdu.nc);
+        if (pin_len < 6 || pin_len > 8 || !piv_pin_digits(apdu.data, pin_len)) {
             return SW_INCORRECT_PARAMS();
         }
-        uint16_t ret = check_pin(pw, apdu.data, apdu.nc);
+        uint16_t ret = check_pin(pw, apdu.data, pin_len);
         if (ret == 0x9000) {
             has_pwpiv = true;
             /* Must match the KDF used when EF_DEK_PWPIV was provisioned. */
-            pin_derive_session(apdu.data, apdu.nc, session_pwpiv);
+            pin_derive_session(apdu.data, pin_len, session_pwpiv);
+        }
+        else {
+            /* NIST SP 800-73-4: a failed VERIFY clears the PIN security
+               status; do not leave a previous successful VERIFY active. */
+            has_pwpiv = false;
+            mbedtls_platform_zeroize(session_pwpiv, sizeof(session_pwpiv));
         }
         return ret; //SW already set
     }
@@ -560,6 +615,15 @@ static int cmd_piv_get_data(void) {
     }
     if ((fid & 0xFFFF00) != 0x5FC100 && (fid & 0xFFFF) != EF_PIV_BITGT && (fid & 0xFFFF) != EF_PIV_DISCOVERY && (fid & 0xFFFF) != EF_PIV_ATTESTATION) {
         return SW_FILE_NOT_FOUND();
+    }
+    /* SP 800-73-4 Part 1 Table 2 ACRs: these containers require the PIV
+       PIN (OCC is not implemented).  Do not expose biometrics/printed
+       information/pairing reference data to an unauthenticated host. */
+    uint16_t efid = (uint16_t) (fid & 0xFFFF);
+    if ((efid == EF_PIV_FINGERPRINTS || efid == EF_PIV_FACIAL ||
+         efid == EF_PIV_PRINTED || efid == EF_PIV_IRIS ||
+         efid == EF_PIV_PC_REF_DATA) && !has_pwpiv) {
+        return SW_SECURITY_STATUS_NOT_SATISFIED();
     }
     file_t *ef = NULL;
     if ((ef = file_search_by_fid((uint16_t)(fid & 0xFFFF), NULL, SPECIFY_EF))) {
@@ -1105,6 +1169,12 @@ static int cmd_authenticate(void) {
     else {
         return SW_INCORRECT_P1P2();
     }
+    /* PINALWAYS on the digital-signature key: one successful signature
+       consumes the PIN verification. */
+    if (key_ref == EF_PIV_KEY_SIGNATURE && meta[1] == PINPOLICY_ALWAYS) {
+        has_pwpiv = false;
+        mbedtls_platform_zeroize(session_pwpiv, sizeof(session_pwpiv));
+    }
     /* GENERAL AUTHENTICATE is not a PIN command: never clear has_pwpiv
        here (9B's meta PIN policy is ALWAYS, which used to log the PIN out
        on every admin authentication). PIN status is cleared by VERIFY
@@ -1423,29 +1493,70 @@ static int cmd_piv_change_pin(void) {
         return SW_INCORRECT_P1P2();
     }
     file_t *ef = file_search_by_fid(pin_ref == 0x80 ? EF_PIV_PIN : EF_PIV_PUK, NULL, SPECIFY_ANY);
-    if (!ef) {
+    if (!ef || file_get_size(ef) != 34) {
         return SW_MEMORY_FAILURE();
     }
     uint8_t *pin_data = file_get_data(ef);
-    if (apdu.nc < pin_data[0]) {
-        return SW_WRONG_LENGTH();
+    uint8_t stored_len = pin_data[0];
+    size_t old_len = 0, new_start = 0, new_len = 0;
+    bool found_old = false, new_invalid = false;
+
+    /* CHANGE REFERENCE DATA carries old PIN || new PIN.  OpenSC/Yubico
+       pad both fields to their fixed-size representation with 0xFF, so
+       try the 6/7/8-byte field boundaries and normalize trailing 0xFF. */
+    for (size_t field = 6; field <= 8; field++) {
+        if (apdu.nc <= field) {
+            continue;
+        }
+        size_t olen = piv_normalize_pin(apdu.data, field);
+        if (olen < 6 || olen > 8 || !piv_pin_digits(apdu.data, olen) ||
+            !piv_pin_matches(ef, apdu.data, olen)) {
+            continue;
+        }
+        old_len = olen;
+        found_old = true;
+        size_t nlen = piv_normalize_pin(apdu.data + field, apdu.nc - field);
+        if (nlen < 6 || nlen > 8 || !piv_pin_digits(apdu.data + field, nlen)) {
+            new_invalid = true;
+            break;
+        }
+        new_start = field;
+        new_len = nlen;
+        break;
     }
-    uint8_t pin_len = (uint8_t) (apdu.nc - pin_data[0]);
-    if (!piv_pin_digits(apdu.data + pin_data[0], pin_len)) {
+    if (!found_old) {
+        if (apdu.nc < stored_len || apdu.nc == 0) {
+            return SW_WRONG_LENGTH();
+        }
+        return check_pin(ef, apdu.data, stored_len);
+    }
+    if (new_invalid) {
         return SW_INCORRECT_PARAMS();
     }
-    uint16_t ret = check_pin(ef, apdu.data, pin_data[0]);
-    if (ret != 0x9000) {
-        return ret;
+
+    /* A PIN change must re-wrap the PIN-encrypted DEK before changing the
+       verifier.  Otherwise every PIVKEY1 key becomes undecryptable. */
+    if (pin_ref == 0x80) {
+        if (piv_rewrap_dek(apdu.data, old_len, apdu.data + new_start, new_len) != PICOKEYS_OK) {
+            return SW_EXEC_ERROR();
+        }
     }
 
     uint8_t dhash[34];
-    dhash[0] = pin_len;
-    dhash[1] = 0x1; // Format
-    pin_derive_verifier(apdu.data + pin_data[0], pin_len, dhash + 2);
-    file_put_data(ef, dhash, sizeof(dhash));
-    has_pwpiv = true;
-    pin_derive_session(apdu.data + pin_data[0], pin_len, session_pwpiv);
+    dhash[0] = (uint8_t) new_len;
+    dhash[1] = 0x1;
+    pin_derive_verifier(apdu.data + new_start, new_len, dhash + 2);
+    if (file_put_data(ef, dhash, sizeof(dhash)) != PICOKEYS_OK) {
+        return SW_MEMORY_FAILURE();
+    }
+    if (pin_ref == 0x80) {
+        has_pwpiv = true;
+        pin_derive_session(apdu.data + new_start, new_len, session_pwpiv);
+    }
+    else {
+        has_pwpiv = false;
+        mbedtls_platform_zeroize(session_pwpiv, sizeof(session_pwpiv));
+    }
     pin_reset_retries(ef, true);
     flash_commit();
     return SW_OK();
@@ -1463,8 +1574,8 @@ static int cmd_piv_reset_retry(void) {
     if (apdu.nc < puk_data[0]) {
         return SW_WRONG_LENGTH();
     }
-    uint8_t pin_len = (uint8_t) (apdu.nc - puk_data[0]);
-    if (!piv_pin_digits(apdu.data + puk_data[0], pin_len)) {
+    size_t pin_len = piv_normalize_pin(apdu.data + puk_data[0], apdu.nc - puk_data[0]);
+    if (pin_len < 6 || pin_len > 8 || !piv_pin_digits(apdu.data + puk_data[0], pin_len)) {
         return SW_INCORRECT_PARAMS();
     }
     uint16_t ret = check_pin(ef, apdu.data, puk_data[0]);
@@ -1472,13 +1583,18 @@ static int cmd_piv_reset_retry(void) {
         return ret;
     }
     uint8_t dhash[34];
-    dhash[0] = pin_len;
+    dhash[0] = (uint8_t) pin_len;
     dhash[1] = 0x1; // Format
     pin_derive_verifier(apdu.data + puk_data[0], pin_len, dhash + 2);
     ef = file_search_by_fid(EF_PIV_PIN, NULL, SPECIFY_ANY);
-    file_put_data(ef, dhash, sizeof(dhash));
-    has_pwpiv = true;
-    pin_derive_session(apdu.data + puk_data[0], pin_len, session_pwpiv);
+    if (!ef || file_put_data(ef, dhash, sizeof(dhash)) != PICOKEYS_OK) {
+        return SW_MEMORY_FAILURE();
+    }
+    /* RESET RETRY authenticates the PUK, not the new PIN.  Do not mark
+       the PIN security status as verified.  The PIN-encrypted DEK cannot
+       be re-wrapped here because the old PIN is unknown. */
+    has_pwpiv = false;
+    mbedtls_platform_zeroize(session_pwpiv, sizeof(session_pwpiv));
     pin_reset_retries(ef, true);
     flash_commit();
     return SW_OK();
@@ -1530,6 +1646,11 @@ static int cmd_set_retries(void) {
     file_put_data(ef, dhash, sizeof(dhash));
     pin_reset_retries(ef, true);
 
+    /* SET PIN RETRIES changes the PIN reference data; the caller has not
+       verified the new/default PIN.  The old PIN is unknown, so the DEK
+       cannot be re-wrapped here either. */
+    has_pwpiv = false;
+    mbedtls_platform_zeroize(session_pwpiv, sizeof(session_pwpiv));
     flash_commit();
     return SW_OK();
 }
@@ -1584,6 +1705,14 @@ static int cmd_reset(void) {
     piv_delete_fid(EF_PIV_PUK);
     piv_delete_fid(EF_PIV_BITGT);
     piv_delete_fid(EF_PIV_KEY_ATTESTATION);
+    /* Drop the PIN-wrapped DEK so scan_files_piv() runs its factory
+       provisioning path again.  This restores the default 9B management key
+       and its metadata after RESET; without deleting it, scan_files_piv()
+       skips the default-management-key branch. */
+    piv_delete_fid(EF_DEK_PWPIV);
+    has_mgm = false;
+    has_pwpiv = false;
+    mbedtls_platform_zeroize(session_pwpiv, sizeof(session_pwpiv));
     /* The shared PW_PRIV file is intentionally not deleted; reset only the
        PIV PIN/PUK retry bytes (indices 7/8 in the 9-byte layout). */
     if (file_get_size(pw_status) == 9) {
