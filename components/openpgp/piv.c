@@ -165,65 +165,31 @@ static int x509_create_cert(void *pk_ctx, uint8_t algo, uint8_t slot, bool attes
     return ret;
 }
 
-static void piv_fascn_char(uint8_t *out, unsigned *bit, uint8_t value) {
-    uint8_t five = (uint8_t) ((value & 0x0F) << 1);
-    uint8_t ones = 0;
-    for (uint8_t x = five; x; x >>= 1) {
-        ones += x & 1;
-    }
-    if ((ones & 1) == 0) {
-        five |= 1; /* odd parity bit in the LSB */
-    }
-    for (int i = 4; i >= 0; i--) {
-        if (five & (1 << i)) {
-            out[*bit >> 3] |= (uint8_t) (1 << (7 - (*bit & 7)));
-        }
-        (*bit)++;
-    }
-}
-
 static size_t piv_build_chuid(uint8_t *buf, size_t cap) {
     if (cap < 64) {
         return 0;
     }
-    char text[40];
-    memset(text, '0', sizeof(text));
-    text[0] = ';';
-    text[1] = text[2] = text[3] = text[4] = '9';
-    /* Keep the next character 8/9 so the ;9999 prefix is recognised as
-       non-government issued and OpenSC prefers the GUID below. */
-    text[5] = '9';
-    char serial_txt[11];
-    snprintf(serial_txt, sizeof(serial_txt), "%010u", (unsigned) get_serial());
-    memcpy(text + 6, serial_txt, 10);
-    text[39] = '?';
-
-    uint8_t fascn[25] = {0};
-    unsigned bit = 0;
-    for (size_t i = 0; i < sizeof(text); i++) {
-        uint8_t value;
-        if (text[i] >= '0' && text[i] <= '9') {
-            value = (uint8_t) (text[i] - '0');
-        }
-        else if (text[i] == ';') {
-            value = 0x0D;
-        }
-        else if (text[i] == '=') {
-            value = 0x0E;
-        }
-        else {
-            value = 0x0F;
-        }
-        piv_fascn_char(fascn, &bit, value);
-    }
+    /* PIV-I style non-federal placeholder. The real FASC-N, GUID and
+       issuer signature are provisioning data; this keeps OpenSC serial
+       working and gives PACS a stable placeholder identity. */
+    static const uint8_t fascn[25] = {
+        0xD4, 0xE7, 0x39, 0xDA, 0x73, 0x9C, 0xED, 0x39, 0xCE, 0x73,
+        0x9D, 0x83, 0x60, 0xD8, 0x21, 0x08, 0x42, 0x10, 0x84, 0x21,
+        0x08, 0x42, 0x10, 0x87, 0xF3
+    };
 
     /* Random UUID generated once at provisioning and stored in the CHUID.
-       It is therefore stable for the lifetime of the CHUID, but not
-       predictable from the device serial number. */
+       It is stable for the lifetime of the CHUID, but not predictable from
+       the device serial number. */
     uint8_t guid[16];
     memcpy(guid, random_bytes_get(sizeof(guid)), sizeof(guid));
     guid[6] = (uint8_t) ((guid[6] & 0x0F) | 0x40); /* UUID version 4 */
     guid[8] = (uint8_t) ((guid[8] & 0x3F) | 0x80); /* RFC 4122 variant */
+
+    /* Expiration is ASCII YYYYMMDD per SP 800-73-4. */
+    const uint8_t expiration[8] = {
+        '2', '0', '7', '4', '1', '2', '3', '1'
+    };
 
     size_t n = 0;
     buf[n++] = 0x30;
@@ -236,9 +202,14 @@ static size_t piv_build_chuid(uint8_t *buf, size_t cap) {
     n += sizeof(guid);
     buf[n++] = 0x35;
     buf[n++] = 8;
-    const uint8_t expiration[8] = { 0x20, 0x74, 0x12, 0x31, 0x23, 0x59, 0x59, 0x00 };
     memcpy(buf + n, expiration, sizeof(expiration));
     n += sizeof(expiration);
+    /* Empty issuer signature/LRC placeholders; issuers must replace these
+       with a real 3E signature for a production PACS. */
+    buf[n++] = 0x3E;
+    buf[n++] = 0x00;
+    buf[n++] = 0xFE;
+    buf[n++] = 0x00;
     return n;
 }
 static void scan_files_piv(void) {
