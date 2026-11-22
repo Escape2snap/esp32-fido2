@@ -16,10 +16,32 @@
  */
 
 #include "openpgp.h"
+#include "../fido/files.h"
 
 int cmd_put_data(void) {
     uint16_t fid = (P1(apdu) << 8) | P2(apdu);
     file_t *ef;
+    /* The EF table is shared with PIV2/FIDO2.  OpenPGP PUT DATA must not
+       reach another application's objects, even when the caller has the
+       default OpenPGP admin PIN.  Reject PIV namespaces, static PIV
+       function-backed objects, PIV secret records, and FIDO2 internal
+       records. */
+    if ((fid >= 0x0082 && fid <= 0x009e) ||
+        (fid >= 0xC100 && fid <= 0xC123) ||
+        fid == 0x007E || fid == 0x7F61 ||
+        fid == EF_PIV_KEY_ATTESTATION ||
+        fid == EF_META || fid == EF_DEK_PWPIV ||
+        fid == EF_PIV_PIN || fid == EF_PIV_PUK ||
+        fid == EF_KEY_DEV || fid == EF_KEY_DEV_ENC ||
+        fid == EF_EE_DEV || fid == EF_EE_DEV_EA ||
+        fid == EF_COUNTER || fid == EF_PIN ||
+        fid == EF_AUTHTOKEN || fid == EF_PAUTHTOKEN ||
+        fid == EF_MINPINLEN || fid == EF_PIN_COMPLEXITY_POLICY ||
+        fid == EF_DEV_STATE || fid == EF_OPTS ||
+        fid == EF_LARGEBLOB || fid == EF_OTP_PIN ||
+        fid == EF_PIN_ADMIN || fid == EF_DEV_SALT) {
+        return SW_REFERENCE_NOT_FOUND();
+    }
     if (fid == EF_RESET_CODE) {
         fid = EF_RC;
     }
