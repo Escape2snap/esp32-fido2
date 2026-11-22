@@ -247,6 +247,15 @@ static void piv_write_mgm_meta(uint8_t algo) {
     };
     file_put_data(ef_meta, raw, sizeof(raw));
 }
+static void piv_seed_meta(void) {
+    file_t *ef_meta = file_search(EF_META);
+    if (ef_meta && !file_has_data(ef_meta)) {
+        /* A valid, empty private TLV lets meta_add() append instead of
+           taking its empty-file path, which can fail after RESET. */
+        const uint8_t empty_tlv[] = { 0xE0, 0x00 };
+        file_put_data(ef_meta, empty_tlv, sizeof(empty_tlv));
+    }
+}
 static int piv_provision_default_mgm(void) {
     const uint8_t key[24] = {
         0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
@@ -293,6 +302,7 @@ static void piv_ensure_mgm_meta(void) {
 }
 static void scan_files_piv(void) {
     file_scan_flash();
+    piv_seed_meta();
     file_t *ef = file_search_by_fid(EF_PIV_KEY_CARDMGM, NULL, SPECIFY_EF);
     if ((ef = file_search_by_fid(EF_PW_PRIV, NULL, SPECIFY_ANY))) {
         if (file_get_size(ef) == 0) {
@@ -1787,14 +1797,14 @@ static int cmd_set_retries(void) {
     return SW_OK();
 }
 
-static void piv_delete_fid(uint16_t fid) {
+
+/* Reset only the object data; keep EF_META entries so a later scan can
+   update them.  file_delete() also removes metadata and can leave EF_META
+   empty/unusable after mass deletion. */
+static void piv_clear_fid(uint16_t fid) {
     file_t *ef = file_search(fid);
-    /* FILE_DATA_FUNC entries store a function pointer in ->data, not a
-       flash address.  file_delete()/flash_clear_file() would treat that
-       pointer as a flash record and corrupt memory.  Static function-backed
-       objects (e.g. Discovery 7E) must never be deleted. */
     if (ef && (ef->type & FILE_DATA_FUNC) != FILE_DATA_FUNC) {
-        file_delete(ef);
+        flash_clear_file(ef);
     }
 }
 
@@ -1819,29 +1829,29 @@ static int cmd_reset(void) {
        (9A-9E, including the 9B management key) and their metadata, then the
        retired/cert/BIT ranges. */
     for (uint16_t fid = 0x009a; fid <= 0x009e; fid++) {
-        piv_delete_fid(fid);
+        piv_clear_fid(fid);
     }
     for (uint16_t fid = 0x0082; fid <= 0x0096; fid++) {
         if (fid == EF_SIG_COUNT) { /* 0x0093 belongs to OpenPGP */
             continue;
         }
-        piv_delete_fid(fid);
+        piv_clear_fid(fid);
     }
     for (uint16_t fid = 0xc101; fid <= 0xc123; fid++) {
-        piv_delete_fid(fid);
+        piv_clear_fid(fid);
     }
     for (uint16_t fid = 0xff00; fid <= 0xff15; fid++) {
-        piv_delete_fid(fid);
+        piv_clear_fid(fid);
     }
-    piv_delete_fid(EF_PIV_PIN);
-    piv_delete_fid(EF_PIV_PUK);
-    piv_delete_fid(EF_PIV_BITGT);
-    piv_delete_fid(EF_PIV_KEY_ATTESTATION);
+    piv_clear_fid(EF_PIV_PIN);
+    piv_clear_fid(EF_PIV_PUK);
+    piv_clear_fid(EF_PIV_BITGT);
+    piv_clear_fid(EF_PIV_KEY_ATTESTATION);
     /* Drop the PIN-wrapped DEK so scan_files_piv() runs its factory
        provisioning path again.  This restores the default 9B management key
        and its metadata after RESET; without deleting it, scan_files_piv()
        skips the default-management-key branch. */
-    piv_delete_fid(EF_DEK_PWPIV);
+    piv_clear_fid(EF_DEK_PWPIV);
     has_mgm = false;
     has_pwpiv = false;
     mbedtls_platform_zeroize(session_pwpiv, sizeof(session_pwpiv));
