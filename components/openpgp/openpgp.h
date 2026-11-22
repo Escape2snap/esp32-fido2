@@ -106,6 +106,8 @@ int cmd_get_bulk_data(void);
 #define DEK_SIZE        (IV_SIZE + 32)
 #define DEK_AAD_SIZE    (PIN_KDF_SIZE(DEK_SIZE))
 #define DEK_FILE_SIZE   (1 + DEK_AAD_SIZE)
+/* PIV DEK: PIN-wrapped copy followed by a device-kbase-wrapped recovery copy. */
+#define DEK_FILE_SIZE_PIV (1 + 2 * DEK_AAD_SIZE)
 
 #define DEK_FILE_SIZE_OLD (IV_SIZE + 32 + 32 + 32 + 32)
 

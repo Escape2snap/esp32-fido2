@@ -298,9 +298,13 @@ int driver_process_usb_packet_ccid(uint8_t itf, uint16_t rx_read) {
                 led_set_mode(MODE_MOUNTED);
             }
             else if (ccid_header[itf]->bMessageType == CCID_POWER_OFF) {
-                if (ccid_status == 0) {
-                    //card_exit(0);
+                /* ICC power-off is a security boundary: drop the active
+                   application's authentication state (PIV PIN/admin, OpenPGP
+                   PW1/PW3, etc.) instead of keeping it across reconnects. */
+                if (current_app && current_app->unload) {
+                    current_app->unload();
                 }
+                current_app = NULL;
                 ccid_status = 1;
                 ccid_resp_fast[itf]->bMessageType = CCID_SLOT_STATUS_RET;
                 ccid_resp_fast[itf]->dwLength = 0;
