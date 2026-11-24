@@ -240,8 +240,10 @@ PIN/PUK/9B management key and leaves OpenPGP/FIDO2 data untouched.
 PIV CHUID is an OpenSC-readable placeholder: a PIV-I-style FASC-N, a
 random persistent UUIDv4, ASCII expiration and empty `3E`/`FE` fields.
 Production PACS use requires an issuer to replace the FASC-N, expiration
-and `3E` CMS signature via PUT DATA. PIV touch policy is stored and
-reported but is not yet enforced for user-selected ALWAYS/CACHED policies.
+and `3E` CMS signature via PUT DATA. PIV touch policy is enforced for
+private-key operations (sign, ECDH, card authentication) and 9B management
+authentication. New keys and the default management key use NEVER; ALWAYS
+requires a fresh BOOT press and CACHED caches the touch for 15 seconds.
 
 ### FIDO2
 
@@ -410,6 +412,8 @@ The DEK is derived in RAM and is never exported.
   the default PIV PIN/PUK/9B key; it does not erase OpenPGP or FIDO2 data.
 - PIV A.1/A.2 challenge state is isolated; a failed VERIFY clears the
   PIV authentication state; CCID ICC power-off also clears it.
+- PIV touch policies are enforced: NEVER by default for new keys/9B,
+  ALWAYS per operation, CACHED for 15 seconds.
 - PIV PIN-protected containers (fingerprints, facial image, printed
   information, iris, pairing reference) require PIN verification.
 - Rescue PHY writes and `KEYDEV_SIGN` are compile-gated; enable them with

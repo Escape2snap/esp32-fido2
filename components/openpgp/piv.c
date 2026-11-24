@@ -25,6 +25,7 @@
 #include "picokeys.h"
 #include "serial.h"
 #include "random.h"
+#include "usb.h"
 #include "eac.h"
 #include "crypto_utils.h"
 #include "version.h"
@@ -81,6 +82,42 @@ static void piv_auth_clear(void) {
 #define IS_RETIRED(x) ((x) >= EF_PIV_KEY_RETIRED1 && (x) <= EF_PIV_KEY_RETIRED20)
 #define IS_ACTIVE(x) ((x) >= EF_PIV_KEY_AUTHENTICATION && (x) <= EF_PIV_KEY_CARDAUTH)
 #define IS_KEY(x) ((IS_ACTIVE((x))) || (IS_RETIRED((x))))
+
+#define PIV_TOUCH_CACHE_MS 15000
+static uint32_t piv_touch_cache_until;
+
+static bool piv_wait_button(void) {
+#ifdef ENABLE_EMULATION
+    return true;
+#else
+    uint32_t val = EV_PRESS_BUTTON;
+    queue_try_add(&card_to_usb_q, &val);
+    do {
+        queue_remove_blocking(&usb_to_card_q, &val);
+    } while (val != EV_BUTTON_PRESSED && val != EV_BUTTON_TIMEOUT &&
+             val != EV_BUTTON_CANCELLED);
+    return val == EV_BUTTON_PRESSED;
+#endif
+}
+
+static bool piv_touch_check(uint8_t policy) {
+    if (policy == TOUCHPOLICY_ALWAYS) {
+        return piv_wait_button();
+    }
+    if (policy == TOUCHPOLICY_CACHED) {
+        uint32_t now = board_millis();
+        if (piv_touch_cache_until != 0 && (int32_t) (piv_touch_cache_until - now) > 0) {
+            return true;
+        }
+        if (!piv_wait_button()) {
+            return false;
+        }
+        piv_touch_cache_until = now + PIV_TOUCH_CACHE_MS;
+        return true;
+    }
+    return true;
+}
+
 
 uint8_t piv_aid[] = {
     5,
@@ -271,7 +308,7 @@ static void piv_meta_set(uint16_t fid, const uint8_t *data, uint16_t len) {
     piv_meta_append_raw(fid, data, len);
 }
 static void piv_write_mgm_meta(uint8_t algo) {
-    uint8_t meta[] = { algo, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS };
+    uint8_t meta[] = { algo, PINPOLICY_ALWAYS, TOUCHPOLICY_NEVER };
     piv_meta_set(EF_PIV_KEY_CARDMGM, meta, sizeof(meta));
 }
 static void piv_seed_meta(void) {
@@ -313,7 +350,27 @@ static void piv_ensure_mgm_meta(void) {
         return;
     }
     uint8_t *meta = NULL;
-    if (meta_find(EF_PIV_KEY_CARDMGM, &meta) > 0) {
+    int meta_len = meta_find(EF_PIV_KEY_CARDMGM, &meta);
+    if (meta_len >= 3) {
+        /* Older scans forced the default management key to touch ALWAYS
+           without enforcing it.  Migrate that legacy default to NEVER so
+           existing cards are not suddenly locked behind the button. */
+        if (meta[2] == TOUCHPOLICY_ALWAYS) {
+            static const uint8_t def_mgm[24] = {
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08
+            };
+            uint8_t key[32];
+            size_t key_len = 0;
+            if (piv_mgm_load(key, sizeof(key), &key_len) == PICOKEYS_OK &&
+                key_len == sizeof(def_mgm) &&
+                memcmp(key, def_mgm, sizeof(def_mgm)) == 0) {
+                uint8_t new_meta[3] = { meta[0], meta[1], TOUCHPOLICY_NEVER };
+                piv_meta_set(EF_PIV_KEY_CARDMGM, new_meta, sizeof(new_meta));
+            }
+            mbedtls_platform_zeroize(key, sizeof(key));
+        }
         return;
     }
     uint8_t key[32];
@@ -482,6 +539,7 @@ static int piv_unload(void) {
     has_mgm = false;
     piv_auth_clear();
     has_pwpiv = false;
+    piv_touch_cache_until = 0;
     return PICOKEYS_OK;
 }
 
@@ -837,7 +895,7 @@ static int cmd_get_metadata(void) {
     }
     if (key_ref != EF_PIV_PIN && key_ref != EF_PIV_PUK) {
         int meta_len = 0;
-        uint8_t fallback_mgm_meta[3] = { PIV_ALGO_3DES, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS };
+        uint8_t fallback_mgm_meta[3] = { PIV_ALGO_3DES, PINPOLICY_ALWAYS, TOUCHPOLICY_NEVER };
         if ((meta_len = meta_find(key_ref, &meta)) <= 0) {
             if (key_ref == EF_PIV_KEY_CARDMGM) {
                 meta = fallback_mgm_meta;
@@ -1084,7 +1142,7 @@ static int piv_mgm_crypt(uint8_t algo, bool encrypt, const uint8_t *in,
 /* A.1/A.2 management-key flows.  They deliberately use separate state:
    an A.1 plaintext challenge must never be accepted as an A.2 witness. */
 static int piv_mgm_auth(uint8_t algo, asn1_ctx_t *a80, asn1_ctx_t *a81,
-                        asn1_ctx_t *a82) {
+                        asn1_ctx_t *a82, uint8_t touch_policy) {
     bool has80 = a80->data != NULL;
     bool has81 = a81->data != NULL;
     bool has82 = a82->data != NULL;
@@ -1100,6 +1158,9 @@ static int piv_mgm_auth(uint8_t algo, asn1_ctx_t *a80, asn1_ctx_t *a81,
     if (has80 && a80->len == 0) {
         if (has81 || has82) {
             return SW_INCORRECT_PARAMS();
+        }
+        if (!piv_touch_check(touch_policy)) {
+            return SW_SECURITY_STATUS_NOT_SATISFIED();
         }
         piv_auth_clear();
         challenge_len = chal_len;
@@ -1122,6 +1183,9 @@ static int piv_mgm_auth(uint8_t algo, asn1_ctx_t *a80, asn1_ctx_t *a81,
     if (has81 && a81->len == 0) {
         if (has80 || has82) {
             return SW_INCORRECT_PARAMS();
+        }
+        if (!piv_touch_check(touch_policy)) {
+            return SW_SECURITY_STATUS_NOT_SATISFIED();
         }
         piv_auth_clear();
         challenge_len = chal_len;
@@ -1214,7 +1278,7 @@ static int cmd_authenticate(void) {
     }
     uint8_t *meta = NULL;
     int meta_len = 0;
-    uint8_t fallback_mgm_meta[3] = { PIV_ALGO_3DES, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS };
+    uint8_t fallback_mgm_meta[3] = { PIV_ALGO_3DES, PINPOLICY_ALWAYS, TOUCHPOLICY_NEVER };
     if ((meta_len = meta_find(key_ref, &meta)) <= 0) {
         /* Never leave a card unadministrable because EF_META was left
            empty by an interrupted RESET.  Authentication is still gated by
@@ -1259,16 +1323,22 @@ static int cmd_authenticate(void) {
     asn1_find_tag(&a7c, 0x82, &a82);
     asn1_find_tag(&a7c, 0x85, &a85);
     if (a85.data) {
+        if (!piv_touch_check(meta[2])) {
+            return SW_SECURITY_STATUS_NOT_SATISFIED();
+        }
         return piv_key_establishment(key_ref, algo, a85.data, a85.len);
     }
     if (!a80.data && !a81.data && !a82.data) {
         return SW_INCORRECT_PARAMS();
     }
     if (key_ref == EF_PIV_KEY_CARDMGM) {
-        return piv_mgm_auth(algo, &a80, &a81, &a82);
+        return piv_mgm_auth(algo, &a80, &a81, &a82, meta[2]);
     }
     if (a80.data || a82.data || !a81.data || a81.len == 0) {
         return SW_INCORRECT_PARAMS();
+    }
+    if (!piv_touch_check(meta[2])) {
+        return SW_SECURITY_STATUS_NOT_SATISFIED();
     }
     file_t *ef_key = file_search_by_fid(key_ref == 0x93 ? EF_PIV_KEY_RETIRED18 : key_ref, NULL, SPECIFY_EF);
     if (!file_has_data(ef_key)) {
@@ -1452,7 +1522,7 @@ static int cmd_asym_keygen(void) {
     else if (key_ref == EF_PIV_KEY_CARDAUTH) {
         def_pinpol = PINPOLICY_NEVER;
     }
-    uint8_t meta[] = {a80.data[0], asn1_len(&aaa) ? aaa.data[0] : def_pinpol, asn1_len(&aab) ? aab.data[0] : TOUCHPOLICY_ALWAYS, ORIGIN_GENERATED};
+    uint8_t meta[] = {a80.data[0], asn1_len(&aaa) ? aaa.data[0] : def_pinpol, asn1_len(&aab) ? aab.data[0] : TOUCHPOLICY_NEVER, ORIGIN_GENERATED};
     piv_meta_set(key_ref, meta, sizeof(meta));
     flash_commit();
     return SW_OK();
@@ -2052,7 +2122,7 @@ static int cmd_import_asym(void) {
     else if (key_ref == EF_PIV_KEY_CARDAUTH) {
         def_pinpol = PINPOLICY_NEVER;
     }
-    uint8_t meta[] = { algo,  asn1_len(&aaa) ? aaa.data[0] : def_pinpol, asn1_len(&aab) ? aab.data[0] : TOUCHPOLICY_ALWAYS, ORIGIN_IMPORTED };
+    uint8_t meta[] = { algo,  asn1_len(&aaa) ? aaa.data[0] : def_pinpol, asn1_len(&aab) ? aab.data[0] : TOUCHPOLICY_NEVER, ORIGIN_IMPORTED };
     piv_meta_set(key_ref, meta, sizeof(meta));
     return SW_OK();
 }
