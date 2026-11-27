@@ -245,6 +245,25 @@ private-key operations (sign, ECDH, card authentication) and 9B management
 authentication. New keys and the default management key use NEVER; ALWAYS
 requires a fresh BOOT press and CACHED caches the touch for 15 seconds.
 
+### PIV issuer CHUID provisioning
+
+`tools/piv_provision_chuid.py` writes a production-style CHUID through
+PIV A.1 management authentication and chained PUT DATA. The issuer supplies
+the FASC-N, expiration and CMS `3E` signature; the tool generates a random
+UUIDv4 GUID if `--guid` is omitted.
+
+```bash
+py tools/piv_provision_chuid.py \
+  --fascn-hex <25-byte FASC-N hex> \
+  --expiry YYYYMMDD \
+  --signature issuer-chuid.cms \
+  --admin-key <9B management key hex>
+```
+
+Use `--allow-empty-signature` only for an unsigned test CHUID. It is not a
+PACS-conformant issuer credential. The tool requires pyscard and
+pycryptodome, and verifies the CHUID by reading `5FC102` back.
+
 ### FIDO2
 
 ```bash
